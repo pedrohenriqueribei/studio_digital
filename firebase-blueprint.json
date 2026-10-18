@@ -1,0 +1,173 @@
+{
+  "entities": {
+    "Business": {
+      "title": "Business",
+      "description": "Tenant establishment such as aesthetic clinics, beauty salons, and barbershops",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "type": { "type": "string", "enum": ["clinica_estetica", "salao_beleza", "barbearia"] },
+        "tradeName": { "type": "string" },
+        "city": { "type": "string" },
+        "state": { "type": "string" },
+        "phone": { "type": "string" },
+        "cnpj": { "type": "string" },
+        "planId": { "type": "string" },
+        "accentColor": { "type": "string" },
+        "avatarUrl": { "type": "string" },
+        "status": { "type": "string", "enum": ["ativo", "degustacao", "suspenso"] },
+        "createdAt": { "type": "string" },
+        "monthlyRevenue": { "type": "number" }
+      },
+      "required": ["id", "name", "type", "tradeName", "city", "state", "phone", "planId", "status"]
+    },
+    "SaaSPlan": {
+      "title": "SaaSPlan",
+      "description": "Subscription plans for using the Studio Digital platform",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "priceMonthly": { "type": "number" },
+        "maxProfessionals": { "type": "number" },
+        "maxUnits": { "type": "number" },
+        "features": { "type": "array" },
+        "isPopular": { "type": "boolean" },
+        "description": { "type": "string" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["id", "name", "priceMonthly", "maxProfessionals", "maxUnits"]
+    },
+    "Professional": {
+      "title": "Professional",
+      "description": "Staff member or specialist working at a studio or clinic",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "phone": { "type": "string" },
+        "role": { "type": "string", "enum": ["superadmin", "ceo", "gerente", "profissional"] },
+        "avatar": { "type": "string" },
+        "specialties": { "type": "array" },
+        "commissionPercentage": { "type": "number" },
+        "active": { "type": "boolean" },
+        "totalEarningsMonth": { "type": "number" },
+        "appointmentsCountMonth": { "type": "number" }
+      },
+      "required": ["id", "businessId", "name", "email", "role", "commissionPercentage", "active"]
+    },
+    "Service": {
+      "title": "Service",
+      "description": "Service or clinical procedure offered by the tenant",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "durationMinutes": { "type": "number" },
+        "price": { "type": "number" },
+        "commissionPercentage": { "type": "number" },
+        "description": { "type": "string" },
+        "allowedProfessionalIds": { "type": "array" },
+        "active": { "type": "boolean" }
+      },
+      "required": ["id", "businessId", "name", "durationMinutes", "price", "commissionPercentage", "active"]
+    },
+    "Appointment": {
+      "title": "Appointment",
+      "description": "Scheduled booking between a client and a professional",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "clientId": { "type": "string" },
+        "clientName": { "type": "string" },
+        "clientPhone": { "type": "string" },
+        "professionalId": { "type": "string" },
+        "serviceId": { "type": "string" },
+        "serviceName": { "type": "string" },
+        "date": { "type": "string" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "status": { "type": "string", "enum": ["agendado", "confirmado", "em_atendimento", "concluido", "cancelado"] },
+        "price": { "type": "number" },
+        "paymentStatus": { "type": "string", "enum": ["pendente", "pago"] },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "businessId", "clientId", "clientName", "professionalId", "serviceId", "date", "startTime", "endTime", "status", "price"]
+    },
+    "Client": {
+      "title": "Client",
+      "description": "Customer registered at a studio",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "email": { "type": "string" },
+        "totalVisits": { "type": "number" },
+        "totalSpent": { "type": "number" },
+        "lastVisit": { "type": "string" },
+        "notes": { "type": "string" }
+      },
+      "required": ["id", "businessId", "name", "phone"]
+    },
+    "Comanda": {
+      "title": "Comanda",
+      "description": "Point-of-sale ticket for services and retail items",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "appointmentId": { "type": "string" },
+        "clientName": { "type": "string" },
+        "clientPhone": { "type": "string" },
+        "professionalId": { "type": "string" },
+        "professionalName": { "type": "string" },
+        "items": { "type": "array" },
+        "subtotal": { "type": "number" },
+        "discount": { "type": "number" },
+        "total": { "type": "number" },
+        "paymentMethod": { "type": "string" },
+        "status": { "type": "string", "enum": ["aberta", "fechada"] },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "businessId", "clientName", "professionalId", "subtotal", "total", "status"]
+    }
+  },
+  "firestore": {
+    "/businesses/{businessId}": {
+      "schema": "#/entities/Business",
+      "description": "Tenant establishments"
+    },
+    "/saasPlans/{planId}": {
+      "schema": "#/entities/SaaSPlan",
+      "description": "Platform subscription tiers"
+    },
+    "/professionals/{professionalId}": {
+      "schema": "#/entities/Professional",
+      "description": "Specialists and staff members across businesses"
+    },
+    "/services/{serviceId}": {
+      "schema": "#/entities/Service",
+      "description": "Service catalog per tenant"
+    },
+    "/appointments/{appointmentId}": {
+      "schema": "#/entities/Appointment",
+      "description": "Scheduled appointments"
+    },
+    "/clients/{clientId}": {
+      "schema": "#/entities/Client",
+      "description": "Client CRM records"
+    },
+    "/comandas/{comandaId}": {
+      "schema": "#/entities/Comanda",
+      "description": "Cashier and POS tickets"
+    }
+  }
+}

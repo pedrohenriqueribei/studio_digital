@@ -1,0 +1,6 @@
+{
+  "name": "Studio Digital",
+  "description": "Plataforma SaaS para gestão de agenda, equipe e serviços de salões de beleza, barbearias e clínicas de estética.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

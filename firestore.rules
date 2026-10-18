@@ -1,0 +1,72 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isPlatformAdmin() {
+      return isSignedIn() && request.auth.token.email == "pedro.projetos0770@gmail.com";
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Businesses (Tenants)
+    match /businesses/{businessId} {
+      allow read: if true;
+      allow write: if isPlatformAdmin() || isSignedIn();
+    }
+
+    // SaaS Plans
+    match /saasPlans/{planId} {
+      allow read: if true;
+      allow write: if isPlatformAdmin();
+    }
+
+    // Professionals
+    match /professionals/{professionalId} {
+      allow read: if true;
+      allow write: if isPlatformAdmin() || isSignedIn();
+    }
+
+    // Services
+    match /services/{serviceId} {
+      allow read: if true;
+      allow write: if isSignedIn() || isPlatformAdmin();
+    }
+
+    // Appointments
+    match /appointments/{appointmentId} {
+      allow read: if true;
+      allow write: if isSignedIn() || isPlatformAdmin();
+    }
+
+    // Clients
+    match /clients/{clientId} {
+      allow read: if true;
+      allow write: if isSignedIn() || isPlatformAdmin();
+    }
+
+    // Comandas (POS)
+    match /comandas/{comandaId} {
+      allow read: if true;
+      allow write: if isSignedIn() || isPlatformAdmin();
+    }
+
+    // Test connection document
+    match /test/{docId} {
+      allow read: if true;
+      allow write: if isSignedIn();
+    }
+  }
+}
