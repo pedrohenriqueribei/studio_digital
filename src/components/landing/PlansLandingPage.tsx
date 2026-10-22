@@ -160,7 +160,7 @@ export const PlansLandingPage: React.FC = () => {
           {/* Zone 3: Primary Action buttons */}
           <div className="flex items-center gap-2 sm:gap-3 shrink-0">
             <button
-              onClick={() => navigateTo('/admin/painelmaster')}
+              onClick={() => navigateTo('/login')}
               className="px-2.5 sm:px-3 py-1.5 text-xs font-semibold text-slate-700 hover:text-slate-950 hover:bg-slate-100 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
             >
               Acessar Painel

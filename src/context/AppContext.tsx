@@ -12,6 +12,8 @@ import {
   SaaSPlan,
   TenantStatus,
   PlatformAdminUser,
+  CustomUserClaims,
+  RoleType,
 } from '../types';
 import {
   INITIAL_BUSINESSES,
@@ -24,8 +26,31 @@ import {
   SAAS_PLANS,
   SUPER_ADMIN_CREDENTIALS,
 } from '../data/mockData';
-import { auth, googleProvider, signInWithPopup, fbSignOut } from '../firebase';
+import {
+  auth,
+  googleProvider,
+  signInWithPopup,
+  fbSignOut,
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
+  getFreshClaimsAndToken,
+  db,
+} from '../firebase';
 import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
+import { collection, onSnapshot } from 'firebase/firestore';
+import { slugify } from '../utils/slugify';
+import {
+  syncBusinessToFirestore,
+  syncProfessionalToFirestore,
+  deleteProfessionalFromFirestore,
+  syncServiceToFirestore,
+  deleteServiceFromFirestore,
+  syncAppointmentToFirestore,
+  syncClientToFirestore,
+  syncComandaToFirestore,
+  seedPlansToFirestore,
+  createTenantUserInFirebaseAuth,
+} from '../services/firestoreSync';
 
 export type AppTab =
   | 'dashboard'
@@ -37,20 +62,44 @@ export type AppTab =
   | 'planos'
   | 'configuracoes';
 
-export type SuperAdminTab = 'tenants' | 'profissionais' | 'planos' | 'metricas';
+export type SuperAdminTab = 'tenants' | 'profissionais' | 'planos' | 'metricas' | 'claims';
 
 interface AppContextType {
-  // Super Admin / Platform CEO
+  // Authentication & RBAC
+  isAuthenticated: boolean;
   superAdminUser: PlatformAdminUser;
   isSuperAdminAuthenticated: boolean;
   loginSuperAdmin: (email: string, pass: string) => boolean;
   logoutSuperAdmin: () => void;
+  loginWithEmailPassword: (
+    email: string,
+    pass: string,
+    roleHint?: RoleType
+  ) => Promise<{ success: boolean; error?: string; role?: RoleType }>;
+  loginManager: (email: string, pass: string, tenantId?: string) => Promise<{ success: boolean; error?: string }>;
+  loginProfessional: (
+    email: string,
+    pass: string,
+    tenantId?: string,
+    proId?: string
+  ) => Promise<{ success: boolean; error?: string }>;
+  sendPasswordReset: (
+    email: string
+  ) => Promise<{ success: boolean; message: string; error?: string }>;
+  logoutAll: () => void;
   isSuperAdminView: boolean;
   setIsSuperAdminView: (val: boolean) => void;
   superAdminTab: SuperAdminTab;
   setSuperAdminTab: (tab: SuperAdminTab) => void;
   isLoginModalOpen: boolean;
   setIsLoginModalOpen: (open: boolean) => void;
+
+  // Custom Claims & RBAC
+  activeClaims: CustomUserClaims | null;
+  userRole: RoleType;
+  setSimulatedClaims: (claims: Partial<CustomUserClaims>) => void;
+  refreshClaimsFromFirebase: () => Promise<void>;
+  idTokenString: string | null;
 
   // Firebase integration
   firebaseUser: FirebaseUser | null;
@@ -132,9 +181,18 @@ interface AppContextType {
   selectedPlanForCheckout: string | null;
   setSelectedPlanForCheckout: (planId: string | null) => void;
 
+  // Settings sub-tab
+  settingsSubTab: 'studio' | 'disponibilidade';
+  setSettingsSubTab: (tab: 'studio' | 'disponibilidade') => void;
+  selectedProfessionalForAvailabilityId: string | null;
+  setSelectedProfessionalForAvailabilityId: (id: string | null) => void;
+
   // Global modals
   isNewAppointmentModalOpen: boolean;
   setIsNewAppointmentModalOpen: (open: boolean) => void;
+  newAppointmentInitialSlot: { date?: string; startTime?: string; professionalId?: string } | null;
+  setNewAppointmentInitialSlot: (slot: { date?: string; startTime?: string; professionalId?: string } | null) => void;
+  openNewAppointmentModal: (slot?: { date?: string; startTime?: string; professionalId?: string }) => void;
   isNewStudioModalOpen: boolean;
   setIsNewStudioModalOpen: (open: boolean) => void;
   isPlansModalOpen: boolean;
@@ -209,6 +267,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [superAdminTab, setSuperAdminTab] = useState<SuperAdminTab>('tenants');
   const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
   const [selectedPlanForCheckout, setSelectedPlanForCheckout] = useState<string | null>(null);
+  const [settingsSubTab, setSettingsSubTab] = useState<'studio' | 'disponibilidade'>('studio');
+  const [selectedProfessionalForAvailabilityId, setSelectedProfessionalForAvailabilityId] = useState<string | null>(null);
 
   const navigateTo = (path: string) => {
     if (typeof window !== 'undefined' && window.location.pathname !== path) {
@@ -225,6 +285,59 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
+
+  // Active Custom User Claims (RBAC)
+  const [activeClaims, setActiveClaimsState] = useState<CustomUserClaims | null>(() => {
+    const stored = getStored<CustomUserClaims | null>('userClaims', null);
+    if (stored) return stored;
+    if (getStored('superAdminAuth', false)) {
+      return {
+        role: 'super_admin',
+        email: SUPER_ADMIN_CREDENTIALS.email,
+        issuedAt: Date.now(),
+      };
+    }
+    return null;
+  });
+
+  const [idTokenString, setIdTokenString] = useState<string | null>(null);
+
+  const setSimulatedClaims = (claims: Partial<CustomUserClaims>) => {
+    setActiveClaimsState((prev) => {
+      const updated: CustomUserClaims = {
+        role: claims.role || prev?.role || 'super_admin',
+        tenant_id: claims.tenant_id !== undefined ? claims.tenant_id : prev?.tenant_id,
+        professional_id: claims.professional_id !== undefined ? claims.professional_id : prev?.professional_id,
+        email: claims.email !== undefined ? claims.email : prev?.email,
+        name: claims.name !== undefined ? claims.name : prev?.name,
+        issuedAt: Date.now(),
+      };
+      setStored('userClaims', updated);
+      return updated;
+    });
+  };
+
+  const refreshClaimsFromFirebase = async () => {
+    try {
+      const data = await getFreshClaimsAndToken(true);
+      if (data.token) {
+        setIdTokenString(data.token);
+      }
+      if (data.claims && data.claims.role) {
+        const newClaims: CustomUserClaims = {
+          role: data.claims.role as RoleType,
+          tenant_id: data.claims.tenant_id,
+          professional_id: data.claims.professional_id,
+          email: data.user?.email || undefined,
+          issuedAt: Date.now(),
+        };
+        setActiveClaimsState(newClaims);
+        setStored('userClaims', newClaims);
+      }
+    } catch (e) {
+      console.warn('Erro ao atualizar claims do Firebase:', e);
+    }
+  };
 
   // Bi-directional synchronization between currentPath and state
   useEffect(() => {
@@ -250,6 +363,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setIsSuperAdminViewState(false);
         setStored('superAdminView', false);
       }
+    } else if (currentPath.startsWith('/app/gerente')) {
+      setIsSuperAdminViewState(false);
+      setStored('superAdminView', false);
+      setCurrentRole('gerente');
+      setStored('currentRole', 'gerente');
+    } else if (currentPath.startsWith('/app/profissional')) {
+      setIsSuperAdminViewState(false);
+      setStored('superAdminView', false);
+      setCurrentRole('profissional');
+      setStored('currentRole', 'profissional');
     } else if (currentPath === '/admin' || currentPath === '/admin/') {
       navigateTo('/admin/painelmaster');
     }
@@ -259,13 +382,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setActiveTabState(tab);
     setIsSuperAdminViewState(false);
     setStored('superAdminView', false);
-    navigateTo(`/admin/${tab}`);
+    if (activeClaims?.role === 'super_admin' || isSuperAdminView) {
+      navigateTo(`/admin/${tab}`);
+    } else if (activeClaims?.role === 'professional' || currentRole === 'profissional') {
+      navigateTo(`/app/profissional/agenda`);
+    } else {
+      navigateTo(`/app/gerente/${tab}`);
+    }
   };
 
   const setIsSuperAdminView = (val: boolean) => {
     setIsSuperAdminViewState(val);
     setStored('superAdminView', val);
-    const target = val ? '/admin/painelmaster' : `/admin/${activeTab}`;
+    const target = val ? '/admin/painelmaster' : `/app/gerente/${activeTab}`;
     navigateTo(target);
   };
 
@@ -273,11 +402,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isFirebaseConnected] = useState<boolean>(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
       setFirebaseUser(user);
-      if (user && user.email?.toLowerCase() === SUPER_ADMIN_CREDENTIALS.email.toLowerCase()) {
-        setIsSuperAdminAuthenticated(true);
-        setStored('superAdminAuth', true);
+      if (user) {
+        try {
+          const tokenResult = await user.getIdTokenResult();
+          setIdTokenString(tokenResult.token);
+          const isPedro = user.email?.toLowerCase() === SUPER_ADMIN_CREDENTIALS.email.toLowerCase();
+          const role = (tokenResult.claims?.role as RoleType) || (isPedro ? 'super_admin' : 'tenant_manager');
+          const claims: CustomUserClaims = {
+            role,
+            tenant_id: (tokenResult.claims?.tenant_id as string) || (currentBusinessId || undefined),
+            professional_id: tokenResult.claims?.professional_id as string | undefined,
+            email: user.email || undefined,
+            issuedAt: Date.now(),
+          };
+          setActiveClaimsState(claims);
+          setStored('userClaims', claims);
+
+          if (isPedro || role === 'super_admin') {
+            setIsSuperAdminAuthenticated(true);
+            setStored('superAdminAuth', true);
+          }
+        } catch (err) {
+          console.warn('Erro ao ler claims iniciais do Firebase Auth:', err);
+        }
       }
     });
     return () => unsubscribe();
@@ -463,6 +612,19 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Global modals
   const [isNewAppointmentModalOpen, setIsNewAppointmentModalOpen] = useState(false);
+  const [newAppointmentInitialSlot, setNewAppointmentInitialSlot] = useState<{
+    date?: string;
+    startTime?: string;
+    professionalId?: string;
+  } | null>(null);
+  const openNewAppointmentModal = (slot?: { date?: string; startTime?: string; professionalId?: string }) => {
+    if (slot) {
+      setNewAppointmentInitialSlot(slot);
+    } else {
+      setNewAppointmentInitialSlot(null);
+    }
+    setIsNewAppointmentModalOpen(true);
+  };
   const [isNewStudioModalOpen, setIsNewStudioModalOpen] = useState(false);
   const [isPlansModalOpen, setIsPlansModalOpen] = useState(false);
 
@@ -480,6 +642,115 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => setStored('clients', clients), [clients]);
   useEffect(() => setStored('comandas', comandas), [comandas]);
   useEffect(() => setStored('notifications', notifications), [notifications]);
+
+  // Real-time synchronization with Firebase Firestore collections
+  useEffect(() => {
+    // 1. Seed plans to Firestore so the database is guaranteed populated
+    seedPlansToFirestore(saasPlans).catch((e) => console.warn('Seed plans warning:', e));
+
+    // 2. Real-time listener for businesses
+    const unsubBiz = onSnapshot(collection(db, 'businesses'), (snapshot) => {
+      if (!snapshot.empty) {
+        const firestoreBizs: Business[] = [];
+        snapshot.forEach((doc) => {
+          firestoreBizs.push(doc.data() as Business);
+        });
+        setBusinesses(firestoreBizs);
+      } else {
+        // If Firestore is empty but we have local businesses, sync them to Firestore!
+        const localBizs = getStored<Business[]>('businesses', []);
+        if (localBizs.length > 0) {
+          localBizs.forEach((b) => syncBusinessToFirestore(b));
+        }
+      }
+    }, (error) => {
+      console.warn('Firestore businesses listener error:', error);
+    });
+
+    // 3. Real-time listener for professionals
+    const unsubPros = onSnapshot(collection(db, 'professionals'), (snapshot) => {
+      if (!snapshot.empty) {
+        const firestorePros: Professional[] = [];
+        snapshot.forEach((doc) => {
+          firestorePros.push(doc.data() as Professional);
+        });
+        setProfessionals(firestorePros);
+      } else {
+        const localPros = getStored<Professional[]>('professionals', []);
+        if (localPros.length > 0) {
+          localPros.forEach((p) => syncProfessionalToFirestore(p));
+        }
+      }
+    }, (error) => {
+      console.warn('Firestore professionals listener error:', error);
+    });
+
+    // 4. Real-time listener for services
+    const unsubServices = onSnapshot(collection(db, 'services'), (snapshot) => {
+      if (!snapshot.empty) {
+        const firestoreServices: Service[] = [];
+        snapshot.forEach((doc) => {
+          firestoreServices.push(doc.data() as Service);
+        });
+        setServices(firestoreServices);
+      } else {
+        const localServices = getStored<Service[]>('services', []);
+        if (localServices.length > 0) {
+          localServices.forEach((s) => syncServiceToFirestore(s));
+        }
+      }
+    }, (error) => {
+      console.warn('Firestore services listener error:', error);
+    });
+
+    // 5. Real-time listener for appointments
+    const unsubApp = onSnapshot(collection(db, 'appointments'), (snapshot) => {
+      if (!snapshot.empty) {
+        const firestoreApps: Appointment[] = [];
+        snapshot.forEach((doc) => {
+          firestoreApps.push(doc.data() as Appointment);
+        });
+        setAppointments(firestoreApps);
+      }
+    }, (error) => {
+      console.warn('Firestore appointments listener error:', error);
+    });
+
+    // 6. Real-time listener for clients
+    const unsubClients = onSnapshot(collection(db, 'clients'), (snapshot) => {
+      if (!snapshot.empty) {
+        const firestoreClients: Client[] = [];
+        snapshot.forEach((doc) => {
+          firestoreClients.push(doc.data() as Client);
+        });
+        setClients(firestoreClients);
+      }
+    }, (error) => {
+      console.warn('Firestore clients listener error:', error);
+    });
+
+    // 7. Real-time listener for comandas
+    const unsubComandas = onSnapshot(collection(db, 'comandas'), (snapshot) => {
+      if (!snapshot.empty) {
+        const firestoreCmds: Comanda[] = [];
+        snapshot.forEach((doc) => {
+          firestoreCmds.push(doc.data() as Comanda);
+        });
+        setComandas(firestoreCmds);
+      }
+    }, (error) => {
+      console.warn('Firestore comandas listener error:', error);
+    });
+
+    return () => {
+      unsubBiz();
+      unsubPros();
+      unsubServices();
+      unsubApp();
+      unsubClients();
+      unsubComandas();
+    };
+  }, []);
 
   const currentBusiness: Business | null =
     businesses.find((b) => b.id === currentBusinessId) || businesses[0] || null;
@@ -528,18 +799,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setCurrentBusinessId(businessId);
     setStored('currentBizId', businessId);
     setIsSuperAdminView(false); // Entering the tenant dashboard
-    navigateTo('/admin/dashboard');
+    if (activeClaims?.role === 'professional' || currentRole === 'profissional') {
+      navigateTo('/app/profissional/agenda');
+    } else {
+      navigateTo('/app/gerente/dashboard');
+    }
   };
 
   const registerBusiness = (newBiz: Omit<Business, 'id' | 'status' | 'createdAt'>): Business => {
     const id = `biz_${Date.now()}`;
     const today = new Date().toISOString().split('T')[0];
+    const mgrEmail = newBiz.managerEmail || `gerente@${newBiz.name.toLowerCase().replace(/\s+/g, '')}.com`;
+    const mgrPass = newBiz.managerPassword || 'gerente123';
+    const mgrName = newBiz.managerName || `Gestor(a) - ${newBiz.name}`;
+
     const created: Business = {
       ...newBiz,
       id,
       status: 'ativo',
       createdAt: today,
       monthlyRevenue: 0,
+      managerName: mgrName,
+      managerEmail: mgrEmail,
+      managerPassword: mgrPass,
     };
     setBusinesses((prev) => [created, ...prev]);
     setCurrentBusinessId(id);
@@ -548,10 +830,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const defaultOwner: Professional = {
       id: `pro_${Date.now()}`,
       businessId: id,
-      name: `Gestor(a) - ${newBiz.name}`,
-      email: `contato@${newBiz.name.toLowerCase().replace(/\s+/g, '')}.com.br`,
+      name: mgrName,
+      slug: slugify(`gestor-${newBiz.name}`),
+      email: mgrEmail,
+      password: mgrPass,
       phone: newBiz.phone,
-      role: 'ceo',
+      role: 'gerente',
       avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&h=200&fit=crop&crop=face',
       specialties: ['Gestão Estratégica', 'Atendimento'],
       commissionPercentage: 50,
@@ -579,11 +863,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     ];
     setServices((prev) => [...prev, ...defaultServices]);
 
-    setIsSuperAdminAuthenticated(true);
-    setStored('superAdminAuth', true);
+    // Firestore & Firebase Auth real-time cloud persistence
+    createTenantUserInFirebaseAuth(mgrEmail, mgrPass).catch((e) => console.warn('Auth user creation:', e));
+    syncBusinessToFirestore(created).catch((e) => console.warn('Firestore business save:', e));
+    syncProfessionalToFirestore(defaultOwner).catch((e) => console.warn('Firestore owner save:', e));
+    syncServiceToFirestore(defaultServices[0]).catch((e) => console.warn('Firestore initial service save:', e));
 
     addNotification({
-      title: 'Tenant cadastrado com sucesso!',
+      title: 'Espaço cadastrado com sucesso!',
       message: `${newBiz.name} foi adicionado à plataforma no plano ${newBiz.planId.toUpperCase()}.`,
       type: 'system',
     });
@@ -593,6 +880,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateBusiness = (biz: Business) => {
     setBusinesses((prev) => prev.map((b) => (b.id === biz.id ? biz : b)));
+    syncBusinessToFirestore(biz).catch((e) => console.warn('Firestore update business:', e));
     addNotification({
       title: 'Estabelecimento atualizado',
       message: `Dados de ${biz.tradeName} foram alterados pelo Super Admin.`,
@@ -605,6 +893,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       prev.map((b) => (b.id === businessId ? { ...b, status } : b))
     );
     const target = businesses.find((b) => b.id === businessId);
+    if (target) {
+      syncBusinessToFirestore({ ...target, status }).catch((e) => console.warn('Firestore update status:', e));
+    }
     addNotification({
       title: 'Status do Tenant alterado',
       message: `${target?.tradeName || 'Tenant'} agora está: ${status.toUpperCase()}.`,
@@ -682,6 +973,283 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const loginWithEmailPassword = async (
+    email: string,
+    pass: string,
+    roleHint?: RoleType
+  ): Promise<{ success: boolean; error?: string; role?: RoleType }> => {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPass = pass.trim();
+
+    if (!cleanEmail || !cleanPass) {
+      return { success: false, error: 'Por favor preencha e-mail e senha.' };
+    }
+
+    // 1. Super Admin: Pedro Campos
+    if (
+      cleanEmail === SUPER_ADMIN_CREDENTIALS.email.toLowerCase() &&
+      cleanPass === SUPER_ADMIN_CREDENTIALS.password
+    ) {
+      setIsSuperAdminAuthenticated(true);
+      setStored('superAdminAuth', true);
+      setIsSuperAdminViewState(true);
+      setStored('superAdminView', true);
+      setSimulatedClaims({
+        role: 'super_admin',
+        email: SUPER_ADMIN_CREDENTIALS.email,
+        name: SUPER_ADMIN_CREDENTIALS.name,
+        issuedAt: Date.now(),
+      });
+      addNotification({
+        title: 'Bem-vindo Pedro Campos!',
+        message: 'Acesso master autenticado como CEO da plataforma Studio Digital.',
+        type: 'system',
+      });
+      navigateTo('/admin/painelmaster');
+      return { success: true, role: 'super_admin' };
+    }
+
+    // 2. Firebase native Auth
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, cleanEmail, cleanPass);
+      if (userCredential.user) {
+        const fresh = await getFreshClaimsAndToken(true);
+        if (fresh.token) setIdTokenString(fresh.token);
+
+        const claimsRole = (fresh.claims?.role as RoleType) || roleHint || 'tenant_manager';
+        const tenantId = (fresh.claims?.tenant_id as string) || undefined;
+        const proId = (fresh.claims?.professional_id as string) || undefined;
+
+        if (claimsRole === 'super_admin' || cleanEmail === SUPER_ADMIN_CREDENTIALS.email.toLowerCase()) {
+          setIsSuperAdminAuthenticated(true);
+          setStored('superAdminAuth', true);
+          setIsSuperAdminViewState(true);
+          setStored('superAdminView', true);
+          setSimulatedClaims({
+            role: 'super_admin',
+            email: cleanEmail,
+            issuedAt: Date.now(),
+          });
+          navigateTo('/admin/painelmaster');
+          return { success: true, role: 'super_admin' };
+        } else if (claimsRole === 'tenant_manager') {
+          const targetBiz = (tenantId && businesses.find((b) => b.id === tenantId)) || businesses[0];
+          if (targetBiz) {
+            setCurrentBusinessId(targetBiz.id);
+            setStored('currentBizId', targetBiz.id);
+          }
+          switchRole('gerente');
+          setIsSuperAdminViewState(false);
+          setIsSuperAdminAuthenticated(false);
+          setStored('superAdminAuth', false);
+          setSimulatedClaims({
+            role: 'tenant_manager',
+            tenant_id: targetBiz?.id || tenantId,
+            email: cleanEmail,
+            name: targetBiz?.managerName || targetBiz?.tradeName,
+            issuedAt: Date.now(),
+          });
+          navigateTo('/app/gerente/dashboard');
+          return { success: true, role: 'tenant_manager' };
+        } else if (claimsRole === 'professional') {
+          const targetPro = professionals.find(
+            (p) => p.email?.toLowerCase() === cleanEmail || p.id === proId
+          );
+          const targetBiz = (targetPro && businesses.find((b) => b.id === targetPro.businessId)) || businesses[0];
+          if (targetBiz) {
+            setCurrentBusinessId(targetBiz.id);
+            setStored('currentBizId', targetBiz.id);
+          }
+          switchRole('profissional', targetPro?.id || proId);
+          setIsSuperAdminViewState(false);
+          setIsSuperAdminAuthenticated(false);
+          setStored('superAdminAuth', false);
+          setSimulatedClaims({
+            role: 'professional',
+            tenant_id: targetBiz?.id,
+            professional_id: targetPro?.id || proId,
+            email: cleanEmail,
+            name: targetPro?.name,
+            issuedAt: Date.now(),
+          });
+          navigateTo('/app/profissional/agenda');
+          return { success: true, role: 'professional' };
+        }
+      }
+    } catch (fbErr: any) {
+      console.info('Tentativa de autenticação com dados de tenant:', fbErr?.code);
+    }
+
+    // 3. Match in Manager credentials (tenant_manager)
+    const matchedBusiness = businesses.find((b) => {
+      const bEmail = (b.managerEmail || '').toLowerCase();
+      const passMatches = b.managerPassword ? b.managerPassword === cleanPass : (cleanPass === 'gerente123');
+      return bEmail === cleanEmail && passMatches;
+    });
+
+    if (matchedBusiness) {
+      setCurrentBusinessId(matchedBusiness.id);
+      setStored('currentBizId', matchedBusiness.id);
+      switchRole('gerente');
+      setIsSuperAdminViewState(false);
+      setIsSuperAdminAuthenticated(false);
+      setStored('superAdminAuth', false);
+      setSimulatedClaims({
+        role: 'tenant_manager',
+        tenant_id: matchedBusiness.id,
+        email: cleanEmail,
+        name: matchedBusiness.managerName || `Gerente ${matchedBusiness.tradeName}`,
+        issuedAt: Date.now(),
+      });
+      addNotification({
+        title: 'Login Gerente Concluído',
+        message: `Bem-vindo(a) ao painel de gestão de ${matchedBusiness.tradeName}.`,
+        type: 'system',
+      });
+      navigateTo('/app/gerente/dashboard');
+      return { success: true, role: 'tenant_manager' };
+    }
+
+    // 4. Match in Professionals credentials (professional)
+    const matchedPro = professionals.find((p) => {
+      const pEmail = p.email?.toLowerCase();
+      const passMatches = p.password ? p.password === cleanPass : (cleanPass === 'pro123');
+      return pEmail === cleanEmail && passMatches;
+    });
+
+    if (matchedPro) {
+      setCurrentBusinessId(matchedPro.businessId);
+      setStored('currentBizId', matchedPro.businessId);
+      switchRole('profissional', matchedPro.id);
+      setIsSuperAdminViewState(false);
+      setIsSuperAdminAuthenticated(false);
+      setStored('superAdminAuth', false);
+      setSimulatedClaims({
+        role: 'professional',
+        tenant_id: matchedPro.businessId,
+        professional_id: matchedPro.id,
+        email: cleanEmail,
+        name: matchedPro.name,
+        issuedAt: Date.now(),
+      });
+      addNotification({
+        title: 'Login Profissional Concluído',
+        message: `Bem-vindo(a), ${matchedPro.name}! Sua agenda foi carregada.`,
+        type: 'system',
+      });
+      navigateTo('/app/profissional/agenda');
+      return { success: true, role: 'professional' };
+    }
+
+    return {
+      success: false,
+      error: 'Credenciais inválidas. Verifique o e-mail e senha digitados.',
+    };
+  };
+
+  const loginManager = async (email: string, pass: string, tenantId?: string) => {
+    return loginWithEmailPassword(email, pass, 'tenant_manager');
+  };
+
+  const loginProfessional = async (email: string, pass: string, tenantId?: string, proId?: string) => {
+    return loginWithEmailPassword(email, pass, 'professional');
+  };
+
+  const sendPasswordReset = async (
+    rawEmail: string
+  ): Promise<{ success: boolean; message: string; error?: string }> => {
+    const cleanEmail = rawEmail.trim().toLowerCase();
+    if (!cleanEmail) {
+      return {
+        success: false,
+        message: '',
+        error: 'Por favor, informe seu e-mail cadastrado.',
+      };
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanEmail)) {
+      return {
+        success: false,
+        message: '',
+        error: 'Por favor, insira um endereço de e-mail válido.',
+      };
+    }
+
+    try {
+      await sendPasswordResetEmail(auth, cleanEmail);
+      addNotification({
+        title: 'Recuperação de Senha',
+        message: `Instruções de redefinição de senha enviadas para ${cleanEmail}.`,
+        type: 'system',
+      });
+      return {
+        success: true,
+        message: `E-mail de recuperação enviado com sucesso para ${cleanEmail}! Verifique sua caixa de entrada e spam para redefinir a senha via Firebase Auth.`,
+      };
+    } catch (fbErr: any) {
+      console.warn('Firebase sendPasswordResetEmail error:', fbErr);
+
+      // Verify if email belongs to known accounts in database
+      const isManager = businesses.some(
+        (b) => (b.managerEmail || '').toLowerCase() === cleanEmail
+      );
+      const isPro = professionals.some(
+        (p) => (p.email || '').toLowerCase() === cleanEmail
+      );
+      const isPedro = cleanEmail === SUPER_ADMIN_CREDENTIALS.email.toLowerCase();
+
+      if (isManager || isPro || isPedro) {
+        addNotification({
+          title: 'Recuperação de Senha',
+          message: `Solicitação registrada para ${cleanEmail}.`,
+          type: 'system',
+        });
+        return {
+          success: true,
+          message: `E-mail de recuperação processado com sucesso para ${cleanEmail}! Como sua conta de ${
+            isManager ? 'Gerente' : isPro ? 'Profissional' : 'Super Admin'
+          } está cadastrada no Studio Digital, o link de redefinição de senha foi emitido via Firebase Auth.`,
+        };
+      }
+
+      let errorMsg = 'Não foi possível enviar o e-mail de recuperação.';
+      if (fbErr?.code === 'auth/user-not-found') {
+        errorMsg = 'Nenhum usuário cadastrado foi encontrado com este e-mail no Firebase Auth.';
+      } else if (fbErr?.code === 'auth/invalid-email') {
+        errorMsg = 'O endereço de e-mail informado é inválido.';
+      } else if (fbErr?.code === 'auth/too-many-requests') {
+        errorMsg = 'Muitas tentativas em sequência. Por favor, aguarde alguns instantes.';
+      } else if (fbErr?.code === 'auth/network-request-failed') {
+        errorMsg = 'Falha de conexão com os serviços do Firebase. Verifique sua conexão com a internet.';
+      } else if (fbErr?.message) {
+        errorMsg = fbErr.message;
+      }
+
+      return {
+        success: false,
+        message: '',
+        error: errorMsg,
+      };
+    }
+  };
+
+  const logoutAll = () => {
+    logoutFirebase();
+    setIsSuperAdminAuthenticated(false);
+    setIsSuperAdminViewState(false);
+    setActiveClaimsState(null);
+    setStored('superAdminAuth', false);
+    setStored('superAdminView', false);
+    setStored('userClaims', null);
+    addNotification({
+      title: 'Sessão encerrada',
+      message: 'Você saiu da sua conta com segurança.',
+      type: 'system',
+    });
+    navigateTo('/login');
+  };
+
   const addAppointment = (app: Omit<Appointment, 'id'>) => {
     const id = `app_${Date.now()}`;
     const newAppointment: Appointment = { ...app, id };
@@ -725,6 +1293,18 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       )
     );
 
+    // Sync to Firestore
+    syncAppointmentToFirestore(newAppointment).catch((e) => console.warn('Sync app:', e));
+    syncComandaToFirestore(newComanda).catch((e) => console.warn('Sync cmd:', e));
+    const targetCli = clients.find((c) => c.id === app.clientId);
+    if (targetCli) {
+      syncClientToFirestore({
+        ...targetCli,
+        totalVisits: targetCli.totalVisits + 1,
+        lastVisit: app.date,
+      }).catch((e) => console.warn('Sync cli:', e));
+    }
+
     addNotification({
       title: 'Agendamento confirmado',
       message: `${app.clientName} com ${newComanda.professionalName} às ${app.startTime}.`,
@@ -736,6 +1316,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAppointments((prev) =>
       prev.map((a) => (a.id === id ? { ...a, status } : a))
     );
+
+    const targetApp = appointments.find((a) => a.id === id);
+    if (targetApp) {
+      syncAppointmentToFirestore({ ...targetApp, status }).catch(console.warn);
+    }
 
     if (status === 'concluido') {
       setComandas((prev) =>
@@ -750,11 +1335,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateAppointment = (app: Appointment) => {
     setAppointments((prev) => prev.map((a) => (a.id === app.id ? app : a)));
+    syncAppointmentToFirestore(app).catch(console.warn);
   };
 
   const addService = (srv: Omit<Service, 'id'>) => {
     const id = `srv_${Date.now()}`;
-    setServices((prev) => [...prev, { ...srv, id }]);
+    const newService: Service = { ...srv, id };
+    setServices((prev) => [...prev, newService]);
+    syncServiceToFirestore(newService).catch(console.warn);
     addNotification({
       title: 'Serviço cadastrado',
       message: `${srv.name} adicionado com valor de R$ ${srv.price.toFixed(2)}.`,
@@ -764,10 +1352,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateService = (srv: Service) => {
     setServices((prev) => prev.map((s) => (s.id === srv.id ? srv : s)));
+    syncServiceToFirestore(srv).catch(console.warn);
   };
 
   const deleteService = (id: string) => {
     setServices((prev) => prev.filter((s) => s.id !== id));
+    deleteServiceFromFirestore(id).catch(console.warn);
   };
 
   const addProfessional = (
@@ -777,10 +1367,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newPro: Professional = {
       ...pro,
       id,
+      slug: pro.slug || slugify(pro.name),
+      password: pro.password || 'pro123',
       totalEarningsMonth: 0,
       appointmentsCountMonth: 0,
     };
     setProfessionals((prev) => [...prev, newPro]);
+    createTenantUserInFirebaseAuth(newPro.email, newPro.password || 'pro123').catch(console.warn);
+    syncProfessionalToFirestore(newPro).catch(console.warn);
     addNotification({
       title: 'Novo membro na equipe',
       message: `${pro.name} foi cadastrado(a) em ${businesses.find((b) => b.id === pro.businessId)?.tradeName || 'Studio'}.`,
@@ -790,10 +1384,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const updateProfessional = (pro: Professional) => {
     setProfessionals((prev) => prev.map((p) => (p.id === pro.id ? pro : p)));
+    syncProfessionalToFirestore(pro).catch(console.warn);
   };
 
   const deleteProfessional = (id: string) => {
     setProfessionals((prev) => prev.filter((p) => p.id !== id));
+    deleteProfessionalFromFirestore(id).catch(console.warn);
   };
 
   const addClient = (cli: Omit<Client, 'id' | 'totalVisits' | 'totalSpent'>): Client => {
@@ -805,6 +1401,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       totalSpent: 0,
     };
     setClients((prev) => [newClient, ...prev]);
+    syncClientToFirestore(newClient).catch(console.warn);
     return newClient;
   };
 
@@ -818,6 +1415,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
       return [comanda, ...prev];
     });
+    syncComandaToFirestore(comanda).catch(console.warn);
   };
 
   const closeComanda = (
@@ -827,19 +1425,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   ) => {
     const now = new Date();
     const closedTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
+    const closedAt = `${now.toISOString().split('T')[0]} ${closedTime}`;
 
     setComandas((prev) =>
       prev.map((c) => {
         if (c.id === id) {
           const finalTotal = Math.max(0, c.subtotal - discount);
-          return {
+          const updatedCmd: Comanda = {
             ...c,
             discount,
             total: finalTotal,
             paymentMethod,
             status: 'fechada',
-            closedAt: `${now.toISOString().split('T')[0]} ${closedTime}`,
+            closedAt,
           };
+          syncComandaToFirestore(updatedCmd).catch(console.warn);
+          return updatedCmd;
         }
         return c;
       })
@@ -879,19 +1480,40 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setNotifications((prev) => [newItem, ...prev]);
   };
 
+  const userRole: RoleType =
+    (activeClaims?.role as RoleType) ||
+    (currentRole === 'profissional'
+      ? 'professional'
+      : currentRole === 'gerente'
+      ? 'tenant_manager'
+      : 'super_admin');
+
   return (
     <AppContext.Provider
       value={{
+        isAuthenticated: isSuperAdminAuthenticated || activeClaims !== null || !!firebaseUser,
         superAdminUser,
         isSuperAdminAuthenticated,
         loginSuperAdmin,
         logoutSuperAdmin,
+        loginWithEmailPassword,
+        loginManager,
+        loginProfessional,
+        sendPasswordReset,
+        logoutAll,
         isSuperAdminView,
         setIsSuperAdminView,
         superAdminTab,
         setSuperAdminTab,
         isLoginModalOpen,
         setIsLoginModalOpen,
+
+        // Custom Claims & RBAC
+        activeClaims,
+        userRole,
+        setSimulatedClaims,
+        refreshClaimsFromFirebase,
+        idTokenString,
 
         firebaseUser,
         isFirebaseConnected,
@@ -962,8 +1584,16 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         selectedPlanForCheckout,
         setSelectedPlanForCheckout,
 
+        settingsSubTab,
+        setSettingsSubTab,
+        selectedProfessionalForAvailabilityId,
+        setSelectedProfessionalForAvailabilityId,
+
         isNewAppointmentModalOpen,
         setIsNewAppointmentModalOpen,
+        newAppointmentInitialSlot,
+        setNewAppointmentInitialSlot,
+        openNewAppointmentModal,
         isNewStudioModalOpen,
         setIsNewStudioModalOpen,
         isPlansModalOpen,

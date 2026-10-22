@@ -31,6 +31,7 @@ import {
   Cell,
 } from 'recharts';
 import { Appointment, Comanda, UserRole, Professional } from '../../types';
+import { getTodayDateString } from '../../utils/date';
 
 interface WeeklyPerformanceChartProps {
   appointments: Appointment[];
@@ -58,14 +59,15 @@ export const WeeklyPerformanceChart: React.FC<WeeklyPerformanceChartProps> = ({
   const [volumeSubView, setVolumeSubView] = useState<VolumeSubView>('total');
   const [weekOffset, setWeekOffset] = useState<number>(0); // 0 = current week, -1 = prev week, etc.
 
-  // Reference date: standard app date anchor (2026-10-15 or today)
+  // Reference date: anchored to today with week offset navigation
   const baseDate = useMemo(() => {
-    const d = new Date('2026-10-15T12:00:00');
+    const d = new Date();
+    d.setHours(12, 0, 0, 0);
     d.setDate(d.getDate() + weekOffset * 7);
     return d;
   }, [weekOffset]);
 
-  const todayStr = '2026-10-15';
+  const todayStr = getTodayDateString();
 
   // Calculate Monday - Sunday for the selected week
   const weekDays = useMemo(() => {

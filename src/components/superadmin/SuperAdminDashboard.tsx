@@ -22,11 +22,14 @@ import {
   Phone,
   Mail,
   Calendar,
-  Lock,
-  LogOut,
+  Key,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Business, BusinessType, Professional, SaaSPlan, TenantStatus, UserRole } from '../../types';
+import { slugify } from '../../utils/slugify';
+import { SuperAdminClaimsManager } from './SuperAdminClaimsManager';
 
 export const SuperAdminDashboard: React.FC = () => {
   const {
@@ -59,6 +62,10 @@ export const SuperAdminDashboard: React.FC = () => {
   const [tenantStatusFilter, setTenantStatusFilter] = useState<string>('all');
   const [tenantTypeFilter, setTenantTypeFilter] = useState<string>('all');
 
+  // Password visibility states
+  const [showTenantManagerPassword, setShowTenantManagerPassword] = useState(false);
+  const [showProPassword, setShowProPassword] = useState(false);
+
   // Tenant Edit Modal state
   const [editingTenant, setEditingTenant] = useState<Business | null>(null);
   const [tenantFormData, setTenantFormData] = useState<Partial<Business>>({});
@@ -72,6 +79,7 @@ export const SuperAdminDashboard: React.FC = () => {
     businessId: '',
     name: '',
     email: '',
+    password: 'pro123',
     phone: '',
     role: 'profissional' as UserRole,
     specialties: 'Atendimento',
@@ -177,6 +185,7 @@ export const SuperAdminDashboard: React.FC = () => {
         businessId: proFormData.businessId,
         name: proFormData.name,
         email: proFormData.email,
+        password: proFormData.password || editingPro.password || 'pro123',
         phone: proFormData.phone,
         role: proFormData.role,
         avatar: proFormData.avatar || editingPro.avatar,
@@ -194,6 +203,7 @@ export const SuperAdminDashboard: React.FC = () => {
         businessId: proFormData.businessId,
         name: proFormData.name,
         email: proFormData.email,
+        password: proFormData.password || 'pro123',
         phone: proFormData.phone,
         role: proFormData.role,
         avatar: proFormData.avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&h=200&fit=crop&crop=face',
@@ -279,7 +289,7 @@ export const SuperAdminDashboard: React.FC = () => {
             <button
               onClick={() => {
                 setIsSuperAdminView(false);
-                navigateTo('/admin/dashboard');
+                navigateTo('/app/gerente/dashboard');
               }}
               className="px-4 py-2.5 bg-slate-800 hover:bg-slate-700 text-white rounded-xl text-xs font-semibold border border-slate-700 transition-colors cursor-pointer flex items-center gap-2"
             >
@@ -355,6 +365,7 @@ export const SuperAdminDashboard: React.FC = () => {
           { id: 'profissionais', label: 'Gestão Global de Profissionais', icon: Users, count: professionals.length },
           { id: 'planos', label: 'Planos de Contratação SaaS', icon: Crown, count: saasPlans.length },
           { id: 'metricas', label: 'Visão Geral & Métricas da Plataforma', icon: TrendingUp },
+          { id: 'claims', label: 'Custom Claims & RBAC', icon: Key },
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = superAdminTab === tab.id;
@@ -486,6 +497,11 @@ export const SuperAdminDashboard: React.FC = () => {
                         <td className="py-3.5 px-4 text-slate-600">
                           <div>{b.city} - {b.state}</div>
                           <div className="text-[11px] text-slate-400">{b.phone}</div>
+                          {b.managerEmail && (
+                            <div className="text-[11px] text-indigo-600 font-medium truncate max-w-[180px]" title={`Gerente: ${b.managerName || ''} (${b.managerEmail})`}>
+                              👤 {b.managerName || b.managerEmail}
+                            </div>
+                          )}
                         </td>
 
                         <td className="py-3.5 px-4">
@@ -628,6 +644,7 @@ export const SuperAdminDashboard: React.FC = () => {
                   businessId: businesses[0]?.id || '',
                   name: '',
                   email: '',
+                  password: 'pro123',
                   phone: '',
                   role: 'profissional',
                   specialties: 'Atendimento',
@@ -720,6 +737,20 @@ export const SuperAdminDashboard: React.FC = () => {
 
                         <td className="py-3.5 px-4 text-right">
                           <div className="flex items-center justify-end gap-1.5">
+                            {(() => {
+                              const pSlug = pro.slug || slugify(pro.name);
+                              return (
+                                <button
+                                  onClick={() => navigateTo(`/p/${pSlug}`)}
+                                  className="p-1.5 text-amber-600 hover:text-amber-800 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer flex items-center gap-1 text-[11px] font-semibold border border-amber-200"
+                                  title={`Ver página pública exclusiva de agendamento (/p/${pSlug})`}
+                                >
+                                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                                  <span className="hidden xl:inline">Ver Perfil</span>
+                                </button>
+                              );
+                            })()}
+
                             <button
                               onClick={() => {
                                 setEditingPro(pro);
@@ -727,6 +758,7 @@ export const SuperAdminDashboard: React.FC = () => {
                                   businessId: pro.businessId,
                                   name: pro.name,
                                   email: pro.email,
+                                  password: pro.password || 'pro123',
                                   phone: pro.phone,
                                   role: pro.role,
                                   specialties: pro.specialties.join(', '),
@@ -1022,6 +1054,9 @@ export const SuperAdminDashboard: React.FC = () => {
         </div>
       )}
 
+      {/* TAB 5: CUSTOM CLAIMS & RBAC MANAGER */}
+      {superAdminTab === 'claims' && <SuperAdminClaimsManager />}
+
       {/* MODAL: EDIT TENANT */}
       {editingTenant && (
         <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
@@ -1163,6 +1198,71 @@ export const SuperAdminDashboard: React.FC = () => {
                 </div>
               </div>
 
+              {/* Manager Profile & Firebase Auth Credentials */}
+              <div className="pt-3 border-t border-slate-100">
+                <div className="flex items-center gap-2 mb-2">
+                  <Shield className="w-3.5 h-3.5 text-indigo-600" />
+                  <span className="text-xs font-bold text-slate-900">
+                    Acesso do Gerente (Firebase Auth)
+                  </span>
+                </div>
+                <div className="space-y-2.5 bg-slate-50 p-3 rounded-xl border border-slate-200">
+                  <div>
+                    <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                      Nome do Gerente
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Nome completo do gerente"
+                      value={tenantFormData.managerName || ''}
+                      onChange={(e) =>
+                        setTenantFormData({ ...tenantFormData, managerName: e.target.value })
+                      }
+                      className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 bg-white"
+                    />
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                        E-mail de Login
+                      </label>
+                      <input
+                        type="email"
+                        placeholder="gerente@studio.com"
+                        value={tenantFormData.managerEmail || ''}
+                        onChange={(e) =>
+                          setTenantFormData({ ...tenantFormData, managerEmail: e.target.value })
+                        }
+                        className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 bg-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[11px] font-semibold text-slate-600 block mb-1">
+                        Senha de Acesso
+                      </label>
+                      <div className="relative">
+                        <input
+                          type={showTenantManagerPassword ? 'text' : 'password'}
+                          placeholder="Senha de acesso"
+                          value={tenantFormData.managerPassword || ''}
+                          onChange={(e) =>
+                            setTenantFormData({ ...tenantFormData, managerPassword: e.target.value })
+                          }
+                          className="w-full pl-3 pr-8 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 bg-white font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowTenantManagerPassword(!showTenantManagerPassword)}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                        >
+                          {showTenantManagerPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
                 <button
                   type="button"
@@ -1239,7 +1339,7 @@ export const SuperAdminDashboard: React.FC = () => {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-slate-700 block mb-1">
-                    E-mail
+                    E-mail (Login Firebase Auth)
                   </label>
                   <input
                     type="email"
@@ -1250,6 +1350,31 @@ export const SuperAdminDashboard: React.FC = () => {
                     className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500"
                   />
                 </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">
+                    Senha de Acesso
+                  </label>
+                  <div className="relative">
+                    <input
+                      type={showProPassword ? 'text' : 'password'}
+                      required
+                      placeholder="Senha de acesso"
+                      value={proFormData.password}
+                      onChange={(e) => setProFormData({ ...proFormData, password: e.target.value })}
+                      className="w-full pl-3 pr-8 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 font-mono"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowProPassword(!showProPassword)}
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 cursor-pointer"
+                    >
+                      {showProPassword ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-slate-700 block mb-1">
                     Telefone
@@ -1263,9 +1388,6 @@ export const SuperAdminDashboard: React.FC = () => {
                     className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500"
                   />
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-slate-700 block mb-1">
                     Papel no Studio
@@ -1282,6 +1404,9 @@ export const SuperAdminDashboard: React.FC = () => {
                     <option value="ceo">CEO / Sócio do Studio</option>
                   </select>
                 </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs font-semibold text-slate-700 block mb-1">
                     Comissão Padrão (%)
@@ -1301,21 +1426,20 @@ export const SuperAdminDashboard: React.FC = () => {
                     className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 font-mono"
                   />
                 </div>
-              </div>
-
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">
-                  Especialidades (separadas por vírgula)
-                </label>
-                <input
-                  type="text"
-                  placeholder="Ex: Corte Degradê, Harmonização, Mechas..."
-                  value={proFormData.specialties}
-                  onChange={(e) =>
-                    setProFormData({ ...proFormData, specialties: e.target.value })
-                  }
-                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500"
-                />
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">
+                    Especialidades
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ex: Corte Degradê, Mechas..."
+                    value={proFormData.specialties}
+                    onChange={(e) =>
+                      setProFormData({ ...proFormData, specialties: e.target.value })
+                    }
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500"
+                  />
+                </div>
               </div>
 
               <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">

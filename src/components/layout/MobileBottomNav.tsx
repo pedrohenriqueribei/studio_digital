@@ -12,6 +12,7 @@ import {
   BarChart2,
 } from 'lucide-react';
 import { useApp, AppTab, SuperAdminTab } from '../../context/AppContext';
+import { getTodayDateString } from '../../utils/date';
 
 export const MobileBottomNav: React.FC = () => {
   const {
@@ -26,7 +27,7 @@ export const MobileBottomNav: React.FC = () => {
     navigateTo,
   } = useApp();
 
-  const todayStr = '2026-10-15';
+  const todayStr = getTodayDateString();
   const todayAppointmentsCount = activeAppointments.filter(
     (a) => a.date === todayStr && a.status !== 'cancelado'
   ).length;

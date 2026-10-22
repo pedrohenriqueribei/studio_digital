@@ -14,6 +14,7 @@ import {
   ArrowRight,
   Lock,
   Menu,
+  Clock,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { UserRole } from '../../types';
@@ -34,6 +35,8 @@ export const Header: React.FC = () => {
     searchQuery,
     setSearchQuery,
     activeTab,
+    setActiveTab,
+    setSettingsSubTab,
     isSuperAdminAuthenticated,
     superAdminUser,
     isSuperAdminView,
@@ -261,25 +264,31 @@ export const Header: React.FC = () => {
             {isRoleDropdownOpen && (
               <div className="absolute right-0 mt-2 w-72 bg-white rounded-xl shadow-xl border border-slate-200 py-2 z-50 animate-in fade-in zoom-in-95 duration-100">
                 <div className="px-3 py-1.5 text-[11px] font-semibold text-slate-400 uppercase tracking-wider">
-                  Simular Papel no Studio
+                  Alternar Papel (RBAC)
                 </div>
 
-                {(['ceo', 'gerente', 'profissional'] as UserRole[]).map((r) => {
-                  const isSelected = currentRole === r;
+                {[
+                  { id: 'gerente', label: 'Gerente do Studio (/app/gerente)', roleType: 'tenant_manager' },
+                  { id: 'profissional', label: 'Profissional (/app/profissional)', roleType: 'professional' },
+                ].map((item) => {
+                  const isSelected = currentRole === item.id;
                   return (
                     <button
-                      key={r}
+                      key={item.id}
                       onClick={() => {
-                        switchRole(r);
+                        switchRole(item.id as UserRole);
                         setIsRoleDropdownOpen(false);
+                        if (item.id === 'profissional') {
+                          navigateTo('/app/profissional/agenda');
+                        } else {
+                          navigateTo('/app/gerente/dashboard');
+                        }
                       }}
                       className={`w-full text-left px-3 py-2 flex items-center justify-between text-xs hover:bg-slate-50 transition-colors cursor-pointer ${
                         isSelected ? 'bg-indigo-50/60 font-medium' : ''
                       }`}
                     >
-                      <span className="text-slate-900 capitalize font-medium">
-                        {r === 'ceo' ? 'CEO / Dono do Studio' : r === 'gerente' ? 'Gerente' : 'Profissional'}
-                      </span>
+                      <span className="text-slate-900 font-medium">{item.label}</span>
                       {isSelected && <Check className="w-4 h-4 text-indigo-600 shrink-0" />}
                     </button>
                   );
@@ -433,11 +442,22 @@ export const Header: React.FC = () => {
                     className="w-full text-left px-4 py-2 text-xs font-bold text-indigo-600 hover:bg-indigo-50 flex items-center gap-2 cursor-pointer"
                   >
                     <Lock className="w-4 h-4" />
-                    <span>Fazer Login como Pedro Campos (CEO)</span>
+                    <span>Login Super Admin (CEO)</span>
                   </button>
                 )}
 
                 <div className="border-t border-slate-100 my-1" />
+                <button
+                  onClick={() => {
+                    setSettingsSubTab('disponibilidade');
+                    setActiveTab('configuracoes');
+                    setIsUserMenuOpen(false);
+                  }}
+                  className="w-full text-left px-4 py-2 text-xs font-semibold text-slate-800 hover:bg-slate-50 flex items-center gap-2 cursor-pointer"
+                >
+                  <Clock className="w-4 h-4 text-amber-500" />
+                  <span>Configurar Minha Disponibilidade</span>
+                </button>
                 <button
                   onClick={() => {
                     navigateTo('/nossos-planos');

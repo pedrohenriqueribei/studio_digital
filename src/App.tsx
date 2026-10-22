@@ -14,8 +14,12 @@ import { NewAppointmentModal } from './components/agenda/NewAppointmentModal';
 import { NewStudioModal } from './components/saas/NewStudioModal';
 import { PlansModal } from './components/saas/PlansModal';
 import { LoginModal } from './components/auth/LoginModal';
-import { AdminAuthGuard } from './components/auth/AdminAuthGuard';
+import { RBACRouteGuard } from './components/auth/RBACRouteGuard';
+import { UnifiedLoginPage } from './components/auth/UnifiedLoginPage';
+import { ProfessionalPortal } from './components/professional/ProfessionalPortal';
+import { RBACClaimsBar } from './components/layout/RBACClaimsBar';
 import { PlansLandingPage } from './components/landing/PlansLandingPage';
+import { ProfessionalProfilePage } from './components/public/ProfessionalProfilePage';
 import { MobileBottomNav } from './components/layout/MobileBottomNav';
 import { Crown, Check, ExternalLink, Sparkles, Building2 } from 'lucide-react';
 
@@ -29,16 +33,26 @@ const MainContent: React.FC = () => {
     setIsSuperAdminView,
     saasPlans,
     navigateTo,
+    currentPath,
+    userRole,
+    isSuperAdminAuthenticated,
+    setIsLoginModalOpen,
   } = useApp();
 
+  const isProfessionalWorkspace =
+    currentPath.startsWith('/app/profissional') || (userRole === 'professional' && !isSuperAdminView);
+
   return (
-    <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden bg-slate-50/60">
+    <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden bg-slate-50/60 pb-10">
       <Header />
 
-      <main className="flex-1 overflow-y-auto p-3 sm:p-6 lg:p-8 pb-24 md:pb-8 max-w-7xl w-full mx-auto">
-        {/* If in Platform Master Mode (Super Admin) */}
-        {isSuperAdminView ? (
+      <main className="flex-1 overflow-y-auto p-3 sm:p-6 lg:p-8 pb-28 md:pb-16 max-w-7xl w-full mx-auto">
+        {/* If in Platform Master Mode (Super Admin - Pedro Campos) */}
+        {isSuperAdminView || currentPath === '/admin/painelmaster' || currentPath === '/admin' || currentPath === '/admin/' ? (
           <SuperAdminDashboard />
+        ) : isProfessionalWorkspace ? (
+          /* Dedicated Professional Workspace (/app/profissional/*) */
+          <ProfessionalPortal />
         ) : !currentBusiness ? (
           <div className="bg-white rounded-2xl border border-slate-200 p-8 sm:p-12 text-center max-w-xl mx-auto my-12 shadow-2xs">
             <div className="w-16 h-16 rounded-2xl bg-amber-50 border border-amber-200 flex items-center justify-center mx-auto mb-4 text-amber-600">
@@ -59,8 +73,12 @@ const MainContent: React.FC = () => {
               </button>
               <button
                 onClick={() => {
-                  setIsSuperAdminView(true);
-                  navigateTo('/admin/painelmaster');
+                  if (isSuperAdminAuthenticated) {
+                    setIsSuperAdminView(true);
+                    navigateTo('/admin/painelmaster');
+                  } else {
+                    setIsLoginModalOpen(true);
+                  }
                 }}
                 className="w-full sm:w-auto px-5 py-2.5 bg-amber-500 hover:bg-amber-600 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center justify-center gap-2"
               >
@@ -69,7 +87,7 @@ const MainContent: React.FC = () => {
             </div>
           </div>
         ) : (
-          /* Normal Tenant Workspace Views */
+          /* Tenant Manager Workspace (/app/gerente/* or /dashboard/*) */
           <>
             {activeTab === 'dashboard' && <ExecutiveDashboard />}
             {activeTab === 'agenda' && <AgendaView />}
@@ -175,41 +193,62 @@ const MainContent: React.FC = () => {
 
       {/* Mobile Bottom Navigation Bar */}
       <MobileBottomNav />
+
+      {/* RBAC Custom Claims Diagnostic & Quick Switcher Bar */}
+      <RBACClaimsBar />
     </div>
   );
 };
 
 const RootRouter: React.FC = () => {
-  const { currentPath, navigateTo, isSuperAdminAuthenticated } = useApp();
+  const { currentPath, isSuperAdminAuthenticated } = useApp();
+
+  // Route: /login -> Unified Login Page
+  if (currentPath === '/login') {
+    return <UnifiedLoginPage />;
+  }
 
   // Route: /nossos-planos -> Public SaaS pricing landing page
   if (currentPath === '/nossos-planos') {
     return <PlansLandingPage />;
   }
 
-  // All Admin Routes: must have prefix '/admin/' and require authentication
-  if (currentPath.startsWith('/admin')) {
+  // Route: /p/:slugOrId -> Public Professional Profile & Online Booking Page
+  if (currentPath.startsWith('/p/')) {
+    return <ProfessionalProfilePage />;
+  }
+
+  // Protected Routes:
+  // - /admin/* (Restricted to super_admin)
+  // - /app/gerente/* (Restricted to tenant_manager)
+  // - /app/profissional/* (Restricted to professional)
+  // - /dashboard/*
+  if (
+    currentPath.startsWith('/admin') ||
+    currentPath.startsWith('/app/gerente') ||
+    currentPath.startsWith('/app/profissional') ||
+    currentPath.startsWith('/dashboard')
+  ) {
     return (
-      <AdminAuthGuard>
+      <RBACRouteGuard>
         <div className="min-h-screen flex bg-slate-100 text-slate-900 font-sans antialiased overflow-hidden">
           <Sidebar />
           <MainContent />
         </div>
-      </AdminAuthGuard>
+      </RBACRouteGuard>
     );
   }
 
   // Root URL ('/' or ''):
-  // If user is already authenticated as admin, show the admin workspace
-  // If not authenticated, display the public Landing Page (with CTA to login / access panel)
+  // If user is already authenticated, show the workspace guarded by RBAC
   if (isSuperAdminAuthenticated) {
     return (
-      <AdminAuthGuard>
+      <RBACRouteGuard>
         <div className="min-h-screen flex bg-slate-100 text-slate-900 font-sans antialiased overflow-hidden">
           <Sidebar />
           <MainContent />
         </div>
-      </AdminAuthGuard>
+      </RBACRouteGuard>
     );
   }
 

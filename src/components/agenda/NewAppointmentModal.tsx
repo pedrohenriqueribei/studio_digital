@@ -1,11 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { X, Calendar, Clock, User, Scissors, DollarSign } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { getTodayDateString } from '../../utils/date';
 
 export const NewAppointmentModal: React.FC = () => {
   const {
     isNewAppointmentModalOpen,
     setIsNewAppointmentModalOpen,
+    newAppointmentInitialSlot,
+    setNewAppointmentInitialSlot,
     activeServices,
     activeProfessionals,
     activeClients,
@@ -23,21 +26,48 @@ export const NewAppointmentModal: React.FC = () => {
 
   const [serviceId, setServiceId] = useState<string>('');
   const [professionalId, setProfessionalId] = useState<string>('');
-  const [date, setDate] = useState('2026-10-15');
+  const [date, setDate] = useState<string>(getTodayDateString);
   const [startTime, setStartTime] = useState('11:00');
   const [notes, setNotes] = useState('');
 
-  // Set default service and professional when modal opens
+  // Sync date, time, professional when modal opens or initial slot is provided
   useEffect(() => {
-    if (activeServices.length > 0 && !serviceId) {
-      setServiceId(activeServices[0].id);
+    if (isNewAppointmentModalOpen) {
+      if (newAppointmentInitialSlot?.date) {
+        setDate(newAppointmentInitialSlot.date);
+      } else {
+        setDate(getTodayDateString());
+      }
+
+      if (newAppointmentInitialSlot?.startTime) {
+        setStartTime(newAppointmentInitialSlot.startTime);
+      }
+
+      if (newAppointmentInitialSlot?.professionalId) {
+        setProfessionalId(newAppointmentInitialSlot.professionalId);
+      } else if (currentRole === 'profissional' && currentProfessional) {
+        setProfessionalId(currentProfessional.id);
+      } else if (activeProfessionals.length > 0 && !professionalId) {
+        setProfessionalId(activeProfessionals[0].id);
+      }
+
+      if (activeServices.length > 0 && !serviceId) {
+        setServiceId(activeServices[0].id);
+      }
     }
-    if (currentRole === 'profissional' && currentProfessional) {
-      setProfessionalId(currentProfessional.id);
-    } else if (activeProfessionals.length > 0 && !professionalId) {
-      setProfessionalId(activeProfessionals[0].id);
-    }
-  }, [activeServices, activeProfessionals, currentRole, currentProfessional]);
+  }, [
+    isNewAppointmentModalOpen,
+    newAppointmentInitialSlot,
+    activeServices,
+    activeProfessionals,
+    currentRole,
+    currentProfessional,
+  ]);
+
+  const handleClose = () => {
+    setIsNewAppointmentModalOpen(false);
+    setNewAppointmentInitialSlot(null);
+  };
 
   if (!isNewAppointmentModalOpen) return null;
 
@@ -112,7 +142,7 @@ export const NewAppointmentModal: React.FC = () => {
       notes: notes.trim() || undefined,
     });
 
-    setIsNewAppointmentModalOpen(false);
+    handleClose();
     // Reset form
     setNewClientName('');
     setNewClientPhone('');
@@ -132,7 +162,7 @@ export const NewAppointmentModal: React.FC = () => {
             </p>
           </div>
           <button
-            onClick={() => setIsNewAppointmentModalOpen(false)}
+            onClick={handleClose}
             className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg cursor-pointer transition-colors"
           >
             <X className="w-5 h-5" />
@@ -292,7 +322,7 @@ export const NewAppointmentModal: React.FC = () => {
           <div className="flex items-center justify-end gap-2 pt-2">
             <button
               type="button"
-              onClick={() => setIsNewAppointmentModalOpen(false)}
+              onClick={handleClose}
               className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
             >
               Cancelar

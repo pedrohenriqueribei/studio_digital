@@ -22,6 +22,7 @@ import {
 import { useApp } from '../../context/AppContext';
 import { WeeklyPerformanceChart } from './WeeklyPerformanceChart';
 import { IndicatorSummary } from './IndicatorSummary';
+import { getTodayDateString } from '../../utils/date';
 
 export const ExecutiveDashboard: React.FC = () => {
   const {
@@ -40,7 +41,7 @@ export const ExecutiveDashboard: React.FC = () => {
     updateAppointmentStatus,
   } = useApp();
 
-  const todayStr = '2026-10-15';
+  const todayStr = getTodayDateString();
 
   const todayAppointments = useMemo(() => {
     return activeAppointments.filter((a) => a.date === todayStr && a.status !== 'cancelado');

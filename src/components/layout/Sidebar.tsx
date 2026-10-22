@@ -18,8 +18,10 @@ import {
   ArrowRight,
   TrendingUp,
   X,
+  Key,
 } from 'lucide-react';
 import { useApp, AppTab, SuperAdminTab } from '../../context/AppContext';
+import { getTodayDateString } from '../../utils/date';
 
 export const Sidebar: React.FC = () => {
   const {
@@ -46,9 +48,12 @@ export const Sidebar: React.FC = () => {
     professionals,
     saasPlans,
     navigateTo,
+    currentPath,
   } = useApp();
 
-  const todayStr = '2026-10-15';
+  const isProfessionalRole = currentRole === 'profissional' || currentPath.startsWith('/app/profissional');
+
+  const todayStr = getTodayDateString();
   const todayAppointmentsCount = activeAppointments.filter(
     (a) => a.date === todayStr && a.status !== 'cancelado'
   ).length;
@@ -132,6 +137,11 @@ export const Sidebar: React.FC = () => {
       id: 'metricas',
       label: 'Métricas da Plataforma',
       icon: TrendingUp,
+    },
+    {
+      id: 'claims',
+      label: 'Custom Claims & RBAC',
+      icon: Key,
     },
   ];
 
@@ -398,19 +408,33 @@ export const Sidebar: React.FC = () => {
           <>
             {!sidebarCollapsed && (
               <div className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                Menu do Studio
+                {isProfessionalRole ? 'Portal do Profissional' : 'Menu do Studio'}
               </div>
             )}
-            {tenantNavItems.map((item) => {
+            {(isProfessionalRole
+              ? tenantNavItems.filter((i) => ['agenda', 'dashboard', 'clientes', 'configuracoes'].includes(i.id))
+              : tenantNavItems
+            ).map((item) => {
               const Icon = item.icon;
               const isActive = activeTab === item.id;
+              const label = isProfessionalRole && item.id === 'agenda'
+                ? 'Minha Agenda'
+                : isProfessionalRole && item.id === 'dashboard'
+                ? 'Minhas Comissões'
+                : isProfessionalRole && item.id === 'clientes'
+                ? 'Meus Clientes'
+                : item.label;
 
               return (
                 <button
                   key={item.id}
                   onClick={() => {
                     setActiveTab(item.id);
-                    navigateTo('/admin/' + item.id);
+                    if (isProfessionalRole) {
+                      navigateTo('/app/profissional/agenda');
+                    } else {
+                      navigateTo('/app/gerente/' + item.id);
+                    }
                     setIsMobileMenuOpen(false);
                   }}
                   className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors cursor-pointer relative group ${
@@ -418,13 +442,13 @@ export const Sidebar: React.FC = () => {
                       ? 'bg-slate-900 text-white shadow-xs'
                       : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
                   } ${sidebarCollapsed ? 'justify-center px-0' : ''}`}
-                  title={sidebarCollapsed ? item.label : undefined}
+                  title={sidebarCollapsed ? label : undefined}
                 >
                   <Icon className={`w-5 h-5 shrink-0 ${isActive ? 'text-white' : 'text-slate-500 group-hover:text-slate-800'}`} />
 
                   {!sidebarCollapsed && (
                     <div className="flex items-center justify-between flex-1 min-w-0">
-                      <span className="truncate">{item.label}</span>
+                      <span className="truncate">{label}</span>
                       {item.badge !== undefined && (
                         <span
                           className={`text-xs px-2 py-0.5 rounded-md font-mono tabular-nums ${
@@ -441,7 +465,7 @@ export const Sidebar: React.FC = () => {
 
                   {sidebarCollapsed && (
                     <div className="absolute left-full ml-2 px-2.5 py-1 bg-slate-900 text-white text-xs rounded-md shadow-md whitespace-nowrap opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity z-50">
-                      {item.label}
+                      {label}
                       {item.badge !== undefined && ` (${item.badge})`}
                     </div>
                   )}
@@ -452,8 +476,8 @@ export const Sidebar: React.FC = () => {
         )}
       </nav>
 
-      {/* Subscription SaaS Plan Banner in Sidebar (when in tenant view) */}
-      {!isSuperAdminView && currentBusiness && (
+      {/* Subscription SaaS Plan Banner in Sidebar (when in tenant view for managers) */}
+      {!isSuperAdminView && !isProfessionalRole && currentBusiness && (
         !sidebarCollapsed ? (
           <div className="p-3 mx-3 mb-3 bg-linear-to-b from-slate-50 to-slate-100/90 rounded-xl border border-slate-200/80">
             <div className="flex items-center justify-between text-xs mb-1">

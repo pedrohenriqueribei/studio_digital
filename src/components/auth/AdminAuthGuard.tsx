@@ -27,12 +27,6 @@ export const AdminAuthGuard: React.FC<AdminAuthGuardProps> = ({ children }) => {
     return <>{children}</>;
   }
 
-  const handleFillCredentials = () => {
-    setEmail(SUPER_ADMIN_CREDENTIALS.email);
-    setPassword(SUPER_ADMIN_CREDENTIALS.password);
-    setErrorMsg('');
-  };
-
   const handleManualLogin = (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
@@ -105,36 +99,15 @@ export const AdminAuthGuard: React.FC<AdminAuthGuardProps> = ({ children }) => {
             </p>
           </div>
 
-          {/* Quick-Fill Helper for Tester/Demo */}
-          <div className="bg-slate-950/80 p-3.5 rounded-xl border border-slate-800 text-xs space-y-2">
-            <div className="flex items-center justify-between gap-2">
-              <span className="font-semibold text-slate-300 flex items-center gap-1.5 text-[11px]">
-                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                <span>Credenciais do CEO Master:</span>
-              </span>
-              <button
-                type="button"
-                onClick={handleFillCredentials}
-                className="text-[10px] text-amber-400 hover:text-amber-300 font-bold underline cursor-pointer"
-              >
-                Preencher Campos
-              </button>
+          {/* Security Notice */}
+          <div className="bg-slate-950/80 p-3.5 rounded-xl border border-amber-500/30 text-xs space-y-1.5">
+            <div className="flex items-center gap-1.5 font-bold text-amber-400 text-[11px]">
+              <Shield className="w-3.5 h-3.5 text-amber-400" />
+              <span>Acesso Restrito ao Administrador Geral (CEO)</span>
             </div>
-            <div className="font-mono text-[11px] text-slate-400 space-y-0.5">
-              <p>Email: <span className="text-slate-200">{SUPER_ADMIN_CREDENTIALS.email}</span></p>
-              <p>Senha: <span className="text-slate-200">••••••••</span></p>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => {
-                loginSuperAdmin(SUPER_ADMIN_CREDENTIALS.email, SUPER_ADMIN_CREDENTIALS.password);
-              }}
-              className="w-full mt-2 py-1.5 bg-amber-500/15 hover:bg-amber-500/25 border border-amber-500/40 text-amber-300 font-bold text-[11px] rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1.5"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>Entrar Direto como Pedro Campos (CEO Master)</span>
-            </button>
+            <p className="text-[11px] text-slate-300 leading-relaxed">
+              As credenciais de Super Admin são confidenciais e protegidas por criptografia. Digite sua senha cadastrada ou conecte-se com sua conta Google corporativa autorizada.
+            </p>
           </div>
 
           {/* Error Message */}

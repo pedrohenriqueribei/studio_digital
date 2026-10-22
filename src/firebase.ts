@@ -1,5 +1,14 @@
 import { initializeApp } from 'firebase/app';
-import { getAuth, GoogleAuthProvider, signInWithPopup, signOut as fbSignOut } from 'firebase/auth';
+import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signOut as fbSignOut,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updatePassword,
+  sendPasswordResetEmail,
+} from 'firebase/auth';
 import {
   getFirestore,
   doc,
@@ -85,4 +94,31 @@ async function testConnection() {
 
 testConnection();
 
-export { signInWithPopup, fbSignOut };
+export {
+  signInWithPopup,
+  fbSignOut,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updatePassword,
+  sendPasswordResetEmail,
+};
+
+/**
+ * Obtém os Custom Claims e o ID Token atualizado do usuário autenticado no Firebase.
+ * Se forceRefresh = true, força uma chamada ao servidor de Auth para buscar claims recém-atribuídas.
+ */
+export async function getFreshClaimsAndToken(forceRefresh = false) {
+  const user = auth.currentUser;
+  if (!user) {
+    return { token: null, claims: null, user: null };
+  }
+
+  const tokenResult = await user.getIdTokenResult(forceRefresh);
+  return {
+    token: tokenResult.token,
+    claims: (tokenResult.claims || {}) as Record<string, any>,
+    user,
+    expirationTime: tokenResult.expirationTime,
+    authTime: tokenResult.authTime,
+  };
+}

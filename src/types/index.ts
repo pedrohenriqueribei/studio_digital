@@ -1,4 +1,6 @@
-export type UserRole = 'superadmin' | 'ceo' | 'gerente' | 'profissional';
+export * from './rbac';
+
+export type UserRole = 'superadmin' | 'ceo' | 'gerente' | 'profissional' | 'super_admin' | 'tenant_manager';
 
 export type BusinessType = 'clinica_estetica' | 'salao_beleza' | 'barbearia';
 
@@ -31,6 +33,9 @@ export interface Business {
   status: TenantStatus;
   createdAt: string;
   monthlyRevenue?: number;
+  managerName?: string;
+  managerEmail?: string;
+  managerPassword?: string;
 }
 
 export interface PlatformAdminUser {
@@ -43,23 +48,42 @@ export interface PlatformAdminUser {
   authenticated: boolean;
 }
 
+export interface AvailabilityConfig {
+  id: string;
+  startDate: string; // YYYY-MM-DD
+  endDate: string;   // YYYY-MM-DD
+  daysOfWeek: number[]; // 0 to 6 (0 = Domingo, 1 = Segunda, ..., 6 = Sábado)
+  startTime: string; // HH:mm
+  endTime: string;   // HH:mm
+  intervalMinutes?: number;
+  notes?: string;
+  active: boolean;
+  updatedAt?: string;
+}
+
 export interface Professional {
   id: string;
   businessId: string;
   name: string;
   email: string;
+  password?: string;
   phone: string;
   role: UserRole;
   avatar: string;
   specialties: string[];
   commissionPercentage: number;
   bio?: string;
+  slug?: string;
+  coverImage?: string;
+  instagram?: string;
   active: boolean;
   workHours: {
     start: string; // "09:00"
     end: string;   // "19:00"
     daysOfWeek: number[]; // 1 to 6 (Seg a Sab)
   };
+  availabilityConfig?: AvailabilityConfig;
+  availabilityPeriods?: AvailabilityConfig[];
   totalEarningsMonth: number;
   appointmentsCountMonth: number;
 }

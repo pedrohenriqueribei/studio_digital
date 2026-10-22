@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Appointment, AppointmentStatus } from '../../types';
+import { getTodayDateString, addDaysToDate, formatDateHeader } from '../../utils/date';
 
 export const AgendaView: React.FC = () => {
   const {
@@ -28,14 +29,15 @@ export const AgendaView: React.FC = () => {
     activeServices,
     updateAppointmentStatus,
     setIsNewAppointmentModalOpen,
+    openNewAppointmentModal,
     searchQuery,
     currentRole,
     currentProfessional,
     setActiveTab,
   } = useApp();
 
-  // Selected date state (defaults to today in sample data: 2026-10-15)
-  const [selectedDate, setSelectedDate] = useState('2026-10-15');
+  // Selected date state: always defaults to the current date
+  const [selectedDate, setSelectedDate] = useState<string>(getTodayDateString);
   const [viewMode, setViewMode] = useState<'columns' | 'list'>('columns');
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [selectedProFilter, setSelectedProFilter] = useState<string>(
@@ -43,29 +45,23 @@ export const AgendaView: React.FC = () => {
   );
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
 
-  // Time grid slots from 08:30 to 19:30
-  const timeSlots = [
-    '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
+  // Time grid slots starting from 08:00 through 19:30
+  const defaultTimeSlots = [
+    '08:00', '08:30', '09:00', '09:30', '10:00', '10:30', '11:00', '11:30',
     '12:00', '12:30', '13:00', '13:30', '14:00', '14:30', '15:00',
-    '15:30', '16:00', '16:30', '17:00', '17:30', '18:00', '18:30', '19:00'
+    '15:30', '16:00', '16:30', '17:00', '17:30', '18:00', '18:30', '19:00', '19:30'
   ];
 
   // Adjust date helper
   const changeDate = (days: number) => {
-    const d = new Date(selectedDate + 'T00:00:00');
-    d.setDate(d.getDate() + days);
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    setSelectedDate(`${yyyy}-${mm}-${dd}`);
+    setSelectedDate((prev) => addDaysToDate(prev, days));
   };
 
   const formattedDateHeader = useMemo(() => {
-    const d = new Date(selectedDate + 'T00:00:00');
-    const weekday = d.toLocaleDateString('pt-BR', { weekday: 'long' });
-    const dayAndMonth = d.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' });
-    return `${weekday.charAt(0).toUpperCase() + weekday.slice(1)}, ${dayAndMonth}`;
+    return formatDateHeader(selectedDate);
   }, [selectedDate]);
+
+  const isToday = selectedDate === getTodayDateString();
 
   // Status badges config with dedicated colors, borders and icons
   const getStatusBadge = (status: AppointmentStatus) => {
@@ -179,6 +175,15 @@ export const AgendaView: React.FC = () => {
     return activeProfessionals;
   }, [currentRole, currentProfessional, selectedProFilter, activeProfessionals]);
 
+  // Dynamic time slots: guarantees default schedule + any booked slot is cleanly represented
+  const dynamicTimeSlots = useMemo(() => {
+    const set = new Set(defaultTimeSlots);
+    filteredAppointments.forEach((app) => {
+      if (app.startTime) set.add(app.startTime);
+    });
+    return Array.from(set).sort();
+  }, [defaultTimeSlots, filteredAppointments]);
+
   const getNextStatusAction = (currentStatus: AppointmentStatus) => {
     switch (currentStatus) {
       case 'agendado':
@@ -207,8 +212,12 @@ export const AgendaView: React.FC = () => {
               <ChevronLeft className="w-4 h-4" />
             </button>
             <button
-              onClick={() => setSelectedDate('2026-10-15')}
-              className="px-3 py-1 text-xs font-semibold text-slate-800 hover:bg-white rounded-md transition-colors cursor-pointer"
+              onClick={() => setSelectedDate(getTodayDateString())}
+              className={`px-3 py-1 text-xs font-semibold rounded-md transition-colors cursor-pointer ${
+                isToday
+                  ? 'bg-white text-slate-900 shadow-2xs font-bold'
+                  : 'text-slate-600 hover:text-slate-900 hover:bg-white'
+              }`}
             >
               Hoje
             </button>
@@ -232,6 +241,11 @@ export const AgendaView: React.FC = () => {
             <span className="text-xs text-slate-400 hidden sm:inline">
               ({formattedDateHeader})
             </span>
+            {isToday && (
+              <span className="text-[10px] bg-emerald-100 text-emerald-800 font-bold px-2 py-0.5 rounded-full uppercase tracking-wider hidden sm:inline">
+                Hoje
+              </span>
+            )}
           </div>
         </div>
 
@@ -441,173 +455,176 @@ export const AgendaView: React.FC = () => {
           </div>
         ) : (
           /* Multi-Professional Column Matrix View */
-          <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+          <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden flex flex-col">
             {displayProfessionals.length > 1 && (
               <div className="md:hidden px-3 py-1.5 bg-slate-50 border-b border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
                 <span>Deslize para os lados para ver mais especialistas</span>
                 <span className="font-mono font-bold text-slate-700">{displayProfessionals.length} colunas</span>
               </div>
             )}
-            <div className="overflow-x-auto">
-              {/* Header Row: Professional Columns */}
-              <div className="grid border-b border-slate-200 bg-slate-50/80 sticky top-16 z-10"
-              style={{
-                gridTemplateColumns: `80px repeat(${Math.max(1, displayProfessionals.length)}, minmax(240px, 1fr))`,
-              }}
-            >
-            <div className="p-3 text-xs font-semibold text-slate-400 text-center border-r border-slate-200 flex items-center justify-center">
-              Horário
-            </div>
-            {displayProfessionals.map((pro) => {
-              const proAppointmentsCount = filteredAppointments.filter(
-                (a) => a.professionalId === pro.id
-              ).length;
-              return (
-                <div
-                  key={pro.id}
-                  className="p-3 border-r border-slate-200 last:border-r-0 flex items-center justify-between gap-3"
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <img
-                      src={pro.avatar}
-                      alt={pro.name}
-                      className="w-8 h-8 rounded-full object-cover border border-slate-200"
-                      onError={(e) => {
-                        (e.target as HTMLElement).style.display = 'none';
-                      }}
-                    />
-                    <div className="min-w-0">
-                      <p className="text-xs font-bold text-slate-900 truncate">{pro.name}</p>
-                      <p className="text-[11px] text-slate-500 truncate">
-                        {pro.specialties[0] || 'Especialista'}
-                      </p>
-                    </div>
-                  </div>
-                  <span className="text-[11px] font-mono tabular-nums text-slate-500 bg-white px-2 py-0.5 rounded border border-slate-200 shrink-0">
-                    {proAppointmentsCount} atend.
-                  </span>
+
+            {/* Unified Scroll Container: handles both horizontal and vertical scrolling cleanly */}
+            <div className="overflow-auto max-h-[calc(100vh-230px)] min-h-[480px]">
+              <div
+                className="grid min-w-full"
+                style={{
+                  gridTemplateColumns: `84px repeat(${Math.max(1, displayProfessionals.length)}, minmax(240px, 1fr))`,
+                  minWidth: `${84 + Math.max(1, displayProfessionals.length) * 240}px`,
+                }}
+              >
+                {/* 1. Top-Left Header: 'Horário' - sticky top-0 and left-0, 100% solid opaque bg-slate-100, z-30 */}
+                <div className="sticky top-0 left-0 z-30 bg-slate-100 border-b border-r border-slate-200 p-3 text-xs font-bold text-slate-700 text-center flex items-center justify-center select-none shadow-xs">
+                  Horário
                 </div>
-              );
-            })}
-          </div>
 
-          {/* Time Slots Rows */}
-          <div className="max-h-[720px] overflow-y-auto">
-            <div
-              className="grid"
-              style={{
-                gridTemplateColumns: `80px repeat(${Math.max(1, displayProfessionals.length)}, minmax(240px, 1fr))`,
-              }}
-            >
-              {timeSlots.map((time) => (
-                <React.Fragment key={time}>
-                  {/* Time label cell */}
-                  <div className="py-3 px-2 border-b border-r border-slate-100 text-[11px] font-mono tabular-nums text-slate-400 text-center bg-slate-50/40 select-none">
-                    {time}
-                  </div>
+                {/* 2. Column Headers: Professional Columns - sticky top-0, 100% solid opaque bg-slate-50, z-20 */}
+                {displayProfessionals.map((pro) => {
+                  const proAppointmentsCount = filteredAppointments.filter(
+                    (a) => a.professionalId === pro.id
+                  ).length;
+                  return (
+                    <div
+                      key={pro.id}
+                      className="sticky top-0 z-20 bg-slate-50 border-b border-r border-slate-200 last:border-r-0 p-3 flex items-center justify-between gap-3 shadow-xs"
+                    >
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <img
+                          src={pro.avatar}
+                          alt={pro.name}
+                          className="w-8 h-8 rounded-full object-cover border border-slate-200 bg-white shrink-0"
+                          onError={(e) => {
+                            (e.target as HTMLElement).style.display = 'none';
+                          }}
+                        />
+                        <div className="min-w-0">
+                          <p className="text-xs font-bold text-slate-900 truncate">{pro.name}</p>
+                          <p className="text-[11px] text-slate-500 truncate">
+                            {pro.specialties[0] || 'Especialista'}
+                          </p>
+                        </div>
+                      </div>
+                      <span className="text-[11px] font-mono tabular-nums text-slate-600 bg-white px-2 py-0.5 rounded border border-slate-200 shrink-0 font-medium">
+                        {proAppointmentsCount} atend.
+                      </span>
+                    </div>
+                  );
+                })}
 
-                  {/* Professional slots for this time */}
-                  {displayProfessionals.map((pro) => {
-                    const matchingApps = filteredAppointments.filter(
-                      (app) => app.professionalId === pro.id && app.startTime === time
-                    );
+                {/* 3. Time Slots Rows: Start immediately below the header with earliest hours fully displayed */}
+                {dynamicTimeSlots.map((time) => (
+                  <React.Fragment key={time}>
+                    {/* Time label cell: sticky left-0, 100% solid opaque bg-slate-50, z-10 */}
+                    <div className="sticky left-0 z-10 py-3 px-2 border-b border-r border-slate-200 text-[11px] font-mono tabular-nums text-slate-600 font-semibold text-center bg-slate-50 select-none flex items-center justify-center">
+                      {time}
+                    </div>
 
-                    return (
-                      <div
-                        key={`${pro.id}-${time}`}
-                        className="p-1 border-b border-r border-slate-100 last:border-r-0 min-h-[60px] relative group hover:bg-slate-50/50 transition-colors"
-                      >
-                        {matchingApps.length > 0 ? (
-                          matchingApps.map((app) => {
-                            const badge = getStatusBadge(app.status);
-                            const nextAction = getNextStatusAction(app.status);
-                            const BadgeIcon = badge.icon;
-                            const isCancelled = app.status === 'cancelado';
+                    {/* Professional slots for this time */}
+                    {displayProfessionals.map((pro) => {
+                      const matchingApps = filteredAppointments.filter(
+                        (app) => app.professionalId === pro.id && app.startTime === time
+                      );
 
-                            return (
-                              <div
-                                key={app.id}
-                                onClick={() => setSelectedAppointment(app)}
-                                className={`p-2.5 rounded-lg border text-xs cursor-pointer shadow-2xs hover:shadow-sm transition-all relative ${badge.cardBorder}`}
-                              >
-                                {/* Header with Client Name and Status Badge */}
-                                <div className="flex items-start justify-between gap-1 mb-1.5">
-                                  <span
-                                    className={`font-bold text-slate-900 truncate ${
-                                      isCancelled ? 'line-through text-slate-400' : ''
-                                    }`}
-                                  >
-                                    {app.clientName}
-                                  </span>
+                      return (
+                        <div
+                          key={`${pro.id}-${time}`}
+                          className="p-1 border-b border-r border-slate-100 last:border-r-0 min-h-[64px] relative group hover:bg-slate-50/60 transition-colors bg-white"
+                        >
+                          {matchingApps.length > 0 ? (
+                            matchingApps.map((app) => {
+                              const badge = getStatusBadge(app.status);
+                              const nextAction = getNextStatusAction(app.status);
+                              const BadgeIcon = badge.icon;
+                              const isCancelled = app.status === 'cancelado';
 
-                                  {/* Visual Status Badge with icon */}
-                                  <span
-                                    className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border font-bold uppercase shrink-0 shadow-2xs ${badge.bg}`}
-                                  >
-                                    <BadgeIcon className="w-3 h-3 shrink-0" />
-                                    <span>{badge.label}</span>
-                                  </span>
-                                </div>
-
-                                <p
-                                  className={`text-[11px] truncate mb-1.5 ${
-                                    isCancelled ? 'text-slate-400 line-through' : 'text-slate-600'
-                                  }`}
+                              return (
+                                <div
+                                  key={app.id}
+                                  onClick={() => setSelectedAppointment(app)}
+                                  className={`p-2.5 rounded-lg border text-xs cursor-pointer shadow-2xs hover:shadow-sm transition-all relative ${badge.cardBorder}`}
                                 >
-                                  {app.serviceName}
-                                </p>
+                                  {/* Header with Client Name and Status Badge */}
+                                  <div className="flex items-start justify-between gap-1 mb-1.5">
+                                    <span
+                                      className={`font-bold text-slate-900 truncate ${
+                                        isCancelled ? 'line-through text-slate-400' : ''
+                                      }`}
+                                    >
+                                      {app.clientName}
+                                    </span>
 
-                                <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1.5 border-t border-slate-100/80">
-                                  <div className="flex items-center gap-1">
-                                    <Clock className="w-3 h-3 text-slate-400" />
-                                    <span className="font-mono tabular-nums">
-                                      {app.startTime} - {app.endTime}
+                                    {/* Visual Status Badge with icon */}
+                                    <span
+                                      className={`inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full border font-bold uppercase shrink-0 shadow-2xs ${badge.bg}`}
+                                    >
+                                      <BadgeIcon className="w-3 h-3 shrink-0" />
+                                      <span>{badge.label}</span>
                                     </span>
                                   </div>
-                                  <span
-                                    className={`font-mono tabular-nums font-bold ${
-                                      isCancelled ? 'line-through text-slate-400' : 'text-slate-900'
+
+                                  <p
+                                    className={`text-[11px] truncate mb-1.5 ${
+                                      isCancelled ? 'text-slate-400 line-through' : 'text-slate-600'
                                     }`}
                                   >
-                                    R$ {app.price.toFixed(2)}
-                                  </span>
-                                </div>
+                                    {app.serviceName}
+                                  </p>
 
-                                {nextAction && !isCancelled && (
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      updateAppointmentStatus(app.id, nextAction.next);
-                                    }}
-                                    className="mt-2 w-full flex items-center justify-center gap-1.5 py-1 px-2 text-[10px] font-bold text-white bg-slate-900 hover:bg-slate-800 rounded transition-colors cursor-pointer shadow-2xs"
-                                  >
-                                    <nextAction.icon className="w-3 h-3" />
-                                    <span>{nextAction.label}</span>
-                                  </button>
-                                )}
-                              </div>
-                            );
-                          })
-                        ) : (
-                          <button
-                            onClick={() => setIsNewAppointmentModalOpen(true)}
-                            className="w-full h-full min-h-[44px] flex items-center justify-center text-slate-300 hover:text-slate-500 hover:bg-slate-100/60 rounded-md transition-colors cursor-pointer opacity-0 group-hover:opacity-100"
-                            title={`Agendar com ${pro.name} às ${time}`}
-                          >
-                            <Plus className="w-4 h-4" />
-                          </button>
-                        )}
-                      </div>
-                    );
-                  })}
-                </React.Fragment>
-              ))}
+                                  <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1.5 border-t border-slate-100/80">
+                                    <div className="flex items-center gap-1">
+                                      <Clock className="w-3 h-3 text-slate-400" />
+                                      <span className="font-mono tabular-nums">
+                                        {app.startTime} - {app.endTime}
+                                      </span>
+                                    </div>
+                                    <span
+                                      className={`font-mono tabular-nums font-bold ${
+                                        isCancelled ? 'line-through text-slate-400' : 'text-slate-900'
+                                      }`}
+                                    >
+                                      R$ {app.price.toFixed(2)}
+                                    </span>
+                                  </div>
+
+                                  {nextAction && !isCancelled && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        updateAppointmentStatus(app.id, nextAction.next);
+                                      }}
+                                      className="mt-2 w-full flex items-center justify-center gap-1.5 py-1 px-2 text-[10px] font-bold text-white bg-slate-900 hover:bg-slate-800 rounded transition-colors cursor-pointer shadow-2xs"
+                                    >
+                                      <nextAction.icon className="w-3 h-3" />
+                                      <span>{nextAction.label}</span>
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })
+                          ) : (
+                            <button
+                              onClick={() => {
+                                openNewAppointmentModal({
+                                  date: selectedDate,
+                                  startTime: time,
+                                  professionalId: pro.id,
+                                });
+                              }}
+                              className="w-full h-full min-h-[56px] flex items-center justify-center text-slate-300 hover:text-slate-600 hover:bg-slate-100/70 rounded-md transition-colors cursor-pointer opacity-0 group-hover:opacity-100"
+                              title={`Agendar com ${pro.name} às ${time}`}
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </React.Fragment>
+                ))}
+              </div>
             </div>
           </div>
-        </div>
-      </div>
-      )
-    ) : (
+        )
+      ) : (
         /* List / Daily Queue View */
         <div className="bg-white rounded-xl border border-slate-200 shadow-2xs divide-y divide-slate-100">
           <div className="p-4 bg-slate-50 flex items-center justify-between text-xs font-semibold text-slate-600">
