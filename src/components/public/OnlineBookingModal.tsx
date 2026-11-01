@@ -15,9 +15,10 @@ import {
   MapPin,
   ExternalLink,
   MessageCircle,
+  AlertTriangle,
 } from 'lucide-react';
 import { Professional, Service, Business, Appointment } from '../../types';
-import { getProfessionalScheduleForDate } from '../../utils/availability';
+import { getProfessionalScheduleForDate, checkAppointmentConflict } from '../../utils/availability';
 
 interface OnlineBookingModalProps {
   isOpen: boolean;
@@ -27,6 +28,7 @@ interface OnlineBookingModalProps {
   services: Service[];
   initialServiceId?: string;
   appointments: Appointment[];
+  allProfessionals?: Professional[];
   onConfirmBooking: (appointmentData: {
     serviceId: string;
     serviceName: string;
@@ -49,9 +51,22 @@ export const OnlineBookingModal: React.FC<OnlineBookingModalProps> = ({
   services,
   initialServiceId,
   appointments,
+  allProfessionals,
   onConfirmBooking,
 }) => {
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+
+  // Serviços aplicáveis a este profissional (respeitando allowedProfessionalIds)
+  const applicableServices = useMemo(() => {
+    return services.filter(
+      (s) =>
+        s.active &&
+        (!s.allowedProfessionalIds ||
+          s.allowedProfessionalIds.length === 0 ||
+          s.allowedProfessionalIds.includes(professional.id))
+    );
+  }, [services, professional.id]);
+
   const [selectedServiceId, setSelectedServiceId] = useState<string>(
     initialServiceId || (services[0]?.id ?? '')
   );
@@ -81,10 +96,10 @@ export const OnlineBookingModal: React.FC<OnlineBookingModalProps> = ({
     if (initialServiceId) {
       setSelectedServiceId(initialServiceId);
       setStep(2); // Skip directly to date/time selection if service was preselected
-    } else if (services.length > 0 && !selectedServiceId) {
-      setSelectedServiceId(services[0].id);
+    } else if (applicableServices.length > 0 && !selectedServiceId) {
+      setSelectedServiceId(applicableServices[0].id);
     }
-  }, [initialServiceId, services]);
+  }, [initialServiceId, applicableServices]);
 
   // Reset modal state when closed/opened
   useEffect(() => {
@@ -95,8 +110,8 @@ export const OnlineBookingModal: React.FC<OnlineBookingModalProps> = ({
   }, [isOpen, initialServiceId]);
 
   const selectedService = useMemo(() => {
-    return services.find((s) => s.id === selectedServiceId) || services[0];
-  }, [services, selectedServiceId]);
+    return applicableServices.find((s) => s.id === selectedServiceId) || applicableServices[0] || services[0];
+  }, [applicableServices, services, selectedServiceId]);
 
   // Generate next 14 available days for the picker
   const availableDays = useMemo(() => {
@@ -143,12 +158,6 @@ export const OnlineBookingModal: React.FC<OnlineBookingModalProps> = ({
     if (!schedule.isAvailable) return [];
 
     const duration = selectedService.durationMinutes || 45;
-    const [startH, startM] = schedule.start.split(':').map(Number);
-    const [endH, endM] = schedule.end.split(':').map(Number);
-
-    const startTotal = (startH ?? 9) * 60 + (startM ?? 0);
-    const endTotal = (endH ?? 19) * 60 + (endM ?? 0);
-
     const slots: { time: string; available: boolean; end: string }[] = [];
 
     // Existing active appointments on that date for this professional
@@ -159,37 +168,85 @@ export const OnlineBookingModal: React.FC<OnlineBookingModalProps> = ({
         a.status !== 'cancelado'
     );
 
-    for (let t = startTotal; t + duration <= endTotal; t += 30) {
-      const h = Math.floor(t / 60);
-      const m = t % 60;
-      const endT = t + duration;
-      const endH = Math.floor(endT / 60);
-      const endM = endT % 60;
+    const shifts = schedule.shifts && schedule.shifts.length > 0
+      ? schedule.shifts
+      : [{ id: '1', startTime: schedule.start, endTime: schedule.end }];
 
-      const timeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-      const endTimeStr = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
+    for (const shift of shifts) {
+      const [startH, startM] = shift.startTime.split(':').map(Number);
+      const [endH, endM] = shift.endTime.split(':').map(Number);
+      const startTotal = (startH ?? 9) * 60 + (startM ?? 0);
+      const endTotal = (endH ?? 19) * 60 + (endM ?? 0);
 
-      // Check collision
-      const isTaken = existing.some((app) => {
-        const [appStartH, appStartM] = app.startTime.split(':').map(Number);
-        const [appEndH, appEndM] = app.endTime.split(':').map(Number);
-        const appStart = (appStartH ?? 0) * 60 + (appStartM ?? 0);
-        const appEnd = (appEndH ?? 0) * 60 + (appEndM ?? 0);
+      for (let t = startTotal; t + duration <= endTotal; t += 30) {
+        const h = Math.floor(t / 60);
+        const m = t % 60;
+        const endT = t + duration;
+        const endHour = Math.floor(endT / 60);
+        const endMinute = endT % 60;
 
-        return t < appEnd && endT > appStart;
-      });
+        const timeStr = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+        const endTimeStr = `${String(endHour).padStart(2, '0')}:${String(endMinute).padStart(2, '0')}`;
 
-      slots.push({
-        time: timeStr,
-        end: endTimeStr,
-        available: !isTaken,
-      });
+        // Check collision with existing appointments
+        const isTaken = existing.some((app) => {
+          const [appStartH, appStartM] = app.startTime.split(':').map(Number);
+          const [appEndH, appEndM] = app.endTime.split(':').map(Number);
+          const appStart = (appStartH ?? 0) * 60 + (appStartM ?? 0);
+          const appEnd = (appEndH ?? 0) * 60 + (appEndM ?? 0);
+
+          return t < appEnd && endT > appStart;
+        });
+
+        slots.push({
+          time: timeStr,
+          end: endTimeStr,
+          available: !isTaken,
+        });
+      }
     }
 
     return slots;
   }, [selectedDate, selectedService, professional, appointments]);
 
-  if (!isOpen) return null;
+  // Verificação em tempo real de conflitos para o agendamento online:
+  // 1. Mesmo profissional com mais de 1 cliente no mesmo dia e horário
+  // 2. Mesmo cliente tentando agendar horários sobrepostos (com o mesmo ou com outros profissionais)
+  const liveConflict = useMemo(() => {
+    if (step !== 3 || !selectedDate || !selectedTimeSlot || !clientName.trim() || clientPhone.trim().length < 8) {
+      return null;
+    }
+    const slot = timeSlots.find((s) => s.time === selectedTimeSlot);
+    const endTime = slot?.end || '10:00';
+    const pros = allProfessionals && allProfessionals.length > 0 ? allProfessionals : [professional];
+
+    const result = checkAppointmentConflict({
+      appointments,
+      professionals: pros,
+      date: selectedDate,
+      startTime: selectedTimeSlot,
+      endTime,
+      professionalId: professional.id,
+      client: {
+        name: clientName.trim(),
+        phone: clientPhone.trim(),
+        email: clientEmail.trim() || undefined,
+      },
+    });
+
+    return result.hasConflict ? result : null;
+  }, [
+    step,
+    selectedDate,
+    selectedTimeSlot,
+    timeSlots,
+    clientName,
+    clientPhone,
+    clientEmail,
+    appointments,
+    allProfessionals,
+    professional,
+  ]);
 
   const handleNextStep = () => {
     if (step === 1) {
@@ -225,6 +282,29 @@ export const OnlineBookingModal: React.FC<OnlineBookingModalProps> = ({
       // Find slot end
       const slot = timeSlots.find((s) => s.time === selectedTimeSlot);
       const endTime = slot?.end || '10:00';
+      const pros = allProfessionals && allProfessionals.length > 0 ? allProfessionals : [professional];
+
+      // Verificação rigorosa de conflitos
+      // Regra 1: Apenas 1 cliente por dia e horário para o mesmo profissional
+      // Regra 2: O mesmo cliente não pode ter agendamentos com profissionais diferentes no mesmo dia e horário
+      const conflict = checkAppointmentConflict({
+        appointments,
+        professionals: pros,
+        date: selectedDate,
+        startTime: selectedTimeSlot,
+        endTime,
+        professionalId: professional.id,
+        client: {
+          name: clientName.trim(),
+          phone: clientPhone.trim(),
+          email: clientEmail.trim() || undefined,
+        },
+      });
+
+      if (conflict.hasConflict) {
+        setFormError(conflict.message || 'Conflito de horário detectado para este agendamento.');
+        return;
+      }
 
       onConfirmBooking({
         serviceId: selectedService.id,
@@ -270,6 +350,8 @@ export const OnlineBookingModal: React.FC<OnlineBookingModalProps> = ({
       ? `https://wa.me/55${phoneClean}?text=${message}`
       : `https://wa.me/?text=${message}`;
   }, [confirmedBookingData, professional, business, clientName]);
+
+  if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-4 bg-slate-950/70 backdrop-blur-xs overflow-y-auto">
@@ -372,7 +454,12 @@ export const OnlineBookingModal: React.FC<OnlineBookingModalProps> = ({
               </div>
 
               <div className="space-y-2.5">
-                {services.map((srv) => {
+                {applicableServices.length === 0 && (
+                  <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-center text-xs text-slate-500">
+                    Nenhum serviço disponível com este profissional no momento.
+                  </div>
+                )}
+                {applicableServices.map((srv) => {
                   const isSelected = srv.id === selectedServiceId;
                   return (
                     <div
@@ -641,6 +728,24 @@ export const OnlineBookingModal: React.FC<OnlineBookingModalProps> = ({
                     />
                   </div>
                 </div>
+
+                {/* Live Conflict Warning Banner */}
+                {liveConflict && (
+                  <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-start gap-2.5 animate-in fade-in duration-150">
+                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <div className="flex-1 leading-relaxed">
+                      <p className="font-bold text-rose-900">
+                        {liveConflict.conflictType === 'professional_conflict'
+                          ? 'Horário Ocupado para este Profissional'
+                          : 'Conflito de Horário do Cliente'}
+                      </p>
+                      <p className="mt-0.5 text-rose-700">{liveConflict.message}</p>
+                      <p className="text-[11px] text-rose-600 font-medium mt-1">
+                        💡 Você já possui atendimento marcado neste horário. Escolha outro dia ou horário para prosseguir.
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -733,7 +838,12 @@ export const OnlineBookingModal: React.FC<OnlineBookingModalProps> = ({
             <button
               type="button"
               onClick={handleNextStep}
-              className="px-6 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-2"
+              disabled={step === 3 && Boolean(liveConflict)}
+              className={`px-6 py-2.5 rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-2 ${
+                step === 3 && Boolean(liveConflict)
+                  ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300'
+                  : 'bg-slate-900 hover:bg-slate-800 text-white cursor-pointer'
+              }`}
             >
               <span>{step === 3 ? 'Confirmar Agendamento' : 'Avançar'}</span>
               <ArrowRight className="w-4 h-4" />

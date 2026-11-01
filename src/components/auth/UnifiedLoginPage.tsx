@@ -29,58 +29,27 @@ export const UnifiedLoginPage: React.FC = () => {
     loginWithGoogle,
     sendPasswordReset,
     navigateTo,
-    currentPath,
     businesses,
     professionals,
-    switchBusiness,
-    switchRole,
+    clients,
     setSimulatedClaims,
     setIsSuperAdminView,
     activeClaims,
   } = useApp();
 
-  const [activeTab, setActiveTab] = useState<'super_admin' | 'tenant_manager' | 'professional'>(() => {
-    if (typeof window !== 'undefined') {
-      const recentRole = localStorage.getItem('recentSignupRole');
-      if (recentRole === 'tenant_manager' || recentRole === 'professional') {
-        return recentRole;
-      }
+  const [loginSuccess, setLoginSuccess] = useState('');
+  const [activeTab, setActiveTab] = useState<'tenant_manager' | 'professional' | 'client' | 'super_admin'>(() => {
+    if (typeof window !== 'undefined' && window.location.search.includes('role=client')) {
+      return 'client';
     }
     return 'tenant_manager';
   });
-  const [email, setEmail] = useState(() => {
-    if (typeof window !== 'undefined') {
-      const recentEmail = localStorage.getItem('recentSignupEmail');
-      if (recentEmail) return recentEmail;
-    }
-    return '';
-  });
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
-  const [selectedTenantId, setSelectedTenantId] = useState<string>(() => {
-    if (typeof window !== 'undefined') {
-      const recentEmail = localStorage.getItem('recentSignupEmail');
-      if (recentEmail) {
-        const found = businesses.find(
-          (b) => (b.managerEmail || '').toLowerCase() === recentEmail.toLowerCase()
-        );
-        if (found) return found.id;
-      }
-    }
-    return businesses[0]?.id || '';
-  });
-  const [selectedProId, setSelectedProId] = useState<string>(professionals[0]?.id || '');
   const [errorMsg, setErrorMsg] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [recentSignupNotice, setRecentSignupNotice] = useState<string | null>(() => {
-    if (typeof window !== 'undefined') {
-      const bizName = localStorage.getItem('recentSignupBizName');
-      return bizName
-        ? `🎉 Parabéns! O teste grátis de 14 dias para "${bizName}" foi ativado. Digite sua senha pessoal cadastrada para acessar o painel do Gerente.`
-        : null;
-    }
-    return null;
-  });
+  const [recentSignupNotice, setRecentSignupNotice] = useState<string | null>(null);
 
   // Forgot password state
   const [isForgotMode, setIsForgotMode] = useState(false);
@@ -89,23 +58,53 @@ export const UnifiedLoginPage: React.FC = () => {
   const [resetSuccess, setResetSuccess] = useState('');
   const [resetError, setResetError] = useState('');
 
-  const handleSuperAdminLogin = (e: React.FormEvent) => {
+  const handleClientLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
+    setLoginSuccess('');
+    setIsLoading(true);
+
+    try {
+      const res = await loginWithEmailPassword(email, password, 'client');
+      if (res.success) {
+        setLoginSuccess('Autenticado com sucesso como Cliente! Carregando sua área...');
+      } else {
+        setErrorMsg(res.error || 'Credenciais de cliente inválidas. Verifique seu e-mail e sua senha.');
+      }
+    } catch (err: any) {
+      setErrorMsg(err?.message || 'Falha na autenticação.');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSuperAdminLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMsg('');
+    setLoginSuccess('');
     setIsLoading(true);
 
     try {
       const success = loginSuperAdmin(email, password);
       if (success) {
+        setLoginSuccess('Autenticado como Super Admin! Redirecionando...');
         setSimulatedClaims({
           role: 'super_admin',
           email: SUPER_ADMIN_CREDENTIALS.email,
           assignedAt: Date.now(),
         });
         setIsSuperAdminView(true);
-        navigateTo('/admin/painelmaster');
+        setTimeout(() => {
+          navigateTo('/admin/painelmaster');
+        }, 400);
       } else {
-        setErrorMsg('Credenciais inválidas. Verifique o e-mail e senha de Super Admin.');
+        // Tenta também via login geral caso o usuário tenha preenchido seus dados nesta aba
+        const res = await loginWithEmailPassword(email, password, 'super_admin');
+        if (res.success) {
+          setLoginSuccess('Autenticado com sucesso! Redirecionando para seu painel...');
+        } else {
+          setErrorMsg(res.error || 'Credenciais inválidas. Verifique o e-mail e senha.');
+        }
       }
     } finally {
       setIsLoading(false);
@@ -115,21 +114,18 @@ export const UnifiedLoginPage: React.FC = () => {
   const handleManagerLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
+    setLoginSuccess('');
     setIsLoading(true);
 
     try {
       const res = await loginWithEmailPassword(email, password, 'tenant_manager');
-      if (!res.success) {
-        setErrorMsg(res.error || 'Credenciais de gerente inválidas. Verifique seu e-mail e sua senha pessoal.');
+      if (res.success) {
+        setLoginSuccess('Autenticado com sucesso como Gerente! Carregando painel...');
       } else {
-        try {
-          localStorage.removeItem('recentSignupBizName');
-          localStorage.removeItem('recentSignupEmail');
-          localStorage.removeItem('recentSignupRole');
-        } catch {}
+        setErrorMsg(res.error || 'Credenciais de gerente inválidas. Verifique seu e-mail e sua senha pessoal.');
       }
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Falha na autenticação do Firebase.');
+      setErrorMsg(err?.message || 'Falha na autenticação.');
     } finally {
       setIsLoading(false);
     }
@@ -138,21 +134,18 @@ export const UnifiedLoginPage: React.FC = () => {
   const handleProfessionalLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
+    setLoginSuccess('');
     setIsLoading(true);
 
     try {
       const res = await loginWithEmailPassword(email, password, 'professional');
-      if (!res.success) {
-        setErrorMsg(res.error || 'Credenciais de profissional inválidas. Verifique seu e-mail e sua senha.');
+      if (res.success) {
+        setLoginSuccess('Autenticado com sucesso como Profissional! Carregando agenda...');
       } else {
-        try {
-          localStorage.removeItem('recentSignupBizName');
-          localStorage.removeItem('recentSignupEmail');
-          localStorage.removeItem('recentSignupRole');
-        } catch {}
+        setErrorMsg(res.error || 'Credenciais de profissional inválidas. Verifique seu e-mail e sua senha.');
       }
     } catch (err: any) {
-      setErrorMsg(err?.message || 'Falha na autenticação do Firebase.');
+      setErrorMsg(err?.message || 'Falha na autenticação.');
     } finally {
       setIsLoading(false);
     }
@@ -161,22 +154,48 @@ export const UnifiedLoginPage: React.FC = () => {
   const handleGoogleAuth = async () => {
     setIsLoading(true);
     setErrorMsg('');
+    setLoginSuccess('');
     try {
       const ok = await loginWithGoogle();
       if (ok) {
-        // Automatically route to appropriate dashboard based on claims
-        if (activeClaims?.role === 'professional') {
-          navigateTo('/app/profissional/agenda');
-        } else if (activeClaims?.role === 'tenant_manager') {
-          navigateTo('/app/gerente/dashboard');
-        } else {
-          navigateTo('/admin/painelmaster');
-        }
+        setLoginSuccess('Conectado com sucesso com a conta Google!');
       }
     } catch (e: any) {
       setErrorMsg(e?.message || 'Erro ao conectar com Google.');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleFillDemo = (type: 'super_admin' | 'tenant_manager' | 'professional' | 'client') => {
+    setErrorMsg('');
+    setLoginSuccess('');
+    if (type === 'super_admin') {
+      setEmail(SUPER_ADMIN_CREDENTIALS.email);
+      setPassword(SUPER_ADMIN_CREDENTIALS.password);
+    } else if (type === 'tenant_manager') {
+      const jairBiz = businesses.find((b) => (b.managerEmail || '').toLowerCase() === 'jair_studio@gmail.com');
+      const b = jairBiz || businesses[0];
+      if (b) {
+        setEmail(b.managerEmail || `gerente@${b.tradeName.toLowerCase().replace(/\s+/g, '')}.com`);
+        setPassword(b.managerPassword || '12345678');
+      }
+    } else if (type === 'professional') {
+      const jairPro = professionals.find((p) => (p.email || '').toLowerCase() === 'jair_studio@gmail.com');
+      const p = jairPro || professionals[0];
+      if (p) {
+        setEmail(p.email);
+        setPassword(p.password || '12345678');
+      }
+    } else if (type === 'client') {
+      const cli = clients.find((c) => c.email) || clients[0];
+      if (cli && cli.email) {
+        setEmail(cli.email);
+        setPassword(cli.password || 'cliente123');
+      } else {
+        setEmail('cliente@studiodigital.com');
+        setPassword('cliente123');
+      }
     }
   };
 
@@ -223,7 +242,7 @@ export const UnifiedLoginPage: React.FC = () => {
 
         <span className="text-[11px] font-mono text-amber-400/90 bg-slate-900 border border-amber-500/30 px-3 py-1 rounded-md flex items-center gap-1.5 shadow-2xs">
           <Key className="w-3 h-3 text-amber-400" />
-          <span>Portal RBAC / Firebase Auth</span>
+          <span>Portal RBAC / Multi-Tenant</span>
         </span>
       </div>
 
@@ -237,14 +256,14 @@ export const UnifiedLoginPage: React.FC = () => {
             </div>
             <div>
               <span className="text-[10px] font-mono uppercase tracking-wider font-bold text-amber-400">
-                Studio Digital SaaS · Controle de Acesso Baseado em Funções
+                Studio Digital SaaS · Identificação Automática de Estabelecimento
               </span>
               <h1 className="text-xl sm:text-2xl font-extrabold text-white tracking-tight mt-1">
-                Portal de Autenticação & Acesso
+                Portal de Acesso
               </h1>
             </div>
             <p className="text-xs text-slate-400 max-w-md mx-auto">
-              Selecione o perfil de acesso correspondente à sua função na plataforma ou acesse via Firebase Authentication.
+              Digite seu e-mail e senha. O sistema identifica automaticamente o seu perfil e o seu estabelecimento.
             </p>
           </div>
 
@@ -260,8 +279,7 @@ export const UnifiedLoginPage: React.FC = () => {
                 </div>
                 <p className="text-[11px] text-slate-300 leading-relaxed">
                   Informe o e-mail cadastrado no seu perfil de <strong>Gerente</strong> ou{' '}
-                  <strong>Profissional</strong>. Você receberá um e-mail do <strong>Firebase Auth</strong> com
-                  um link seguro para redefinir sua senha imediatamente.
+                  <strong>Profissional</strong>. Você receberá um link seguro do <strong>Firebase Auth</strong> para redefinir sua senha.
                 </p>
               </div>
 
@@ -336,497 +354,556 @@ export const UnifiedLoginPage: React.FC = () => {
             </div>
           ) : (
             <>
-              {/* 3 Profile Selector Tabs */}
-              <div className="grid grid-cols-3 gap-2 p-1.5 bg-slate-950 rounded-2xl border border-slate-800 text-xs">
+              {/* 4 Profile Selector Tabs */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 p-1.5 bg-slate-950 rounded-2xl border border-slate-800 text-xs">
                 <button
-              onClick={() => {
-                setActiveTab('super_admin');
-                setErrorMsg('');
-              }}
-              className={`py-2 px-3 rounded-xl font-bold transition-all flex flex-col items-center gap-1 cursor-pointer ${
-                activeTab === 'super_admin'
-                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Shield className="w-4 h-4" />
-              <span className="text-[11px]">Super Admin</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setActiveTab('tenant_manager');
-                setErrorMsg('');
-              }}
-              className={`py-2 px-3 rounded-xl font-bold transition-all flex flex-col items-center gap-1 cursor-pointer ${
-                activeTab === 'tenant_manager'
-                  ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Building2 className="w-4 h-4" />
-              <span className="text-[11px]">Gerente</span>
-            </button>
-
-            <button
-              onClick={() => {
-                setActiveTab('professional');
-                setErrorMsg('');
-              }}
-              className={`py-2 px-3 rounded-xl font-bold transition-all flex flex-col items-center gap-1 cursor-pointer ${
-                activeTab === 'professional'
-                  ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20'
-                  : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              <Users className="w-4 h-4" />
-              <span className="text-[11px]">Profissional</span>
-            </button>
-          </div>
-
-          {errorMsg && (
-            <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2">
-              <AlertCircle className="w-4 h-4 shrink-0" />
-              <span>{errorMsg}</span>
-            </div>
-          )}
-
-          {/* TAB 1: SUPER ADMIN */}
-          {activeTab === 'super_admin' && (
-            <div className="space-y-4">
-              <div className="p-3.5 bg-slate-950/90 border border-amber-500/30 rounded-2xl text-xs space-y-2 shadow-inner">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-amber-400 flex items-center gap-1.5">
-                    <Shield className="w-4 h-4 text-amber-400" />
-                    <span>Acesso Restrito · Super Admin (CEO)</span>
-                  </span>
-                  <span className="text-[10px] text-amber-400/90 font-mono bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
-                    Área Protegida
-                  </span>
-                </div>
-                <p className="text-[11px] text-slate-300 leading-relaxed">
-                  Painel confidencial de controle master da plataforma. O acesso exige autenticação individual com senha master ou conta Google vinculada.
-                </p>
-                <div className="flex items-center gap-1.5 text-[10px] text-amber-400/80 pt-1 border-t border-amber-500/20 font-mono">
-                  <Lock className="w-3 h-3 text-amber-400 shrink-0" />
-                  <span>Credenciais protegidas. Acesso público estritamente bloqueado.</span>
-                </div>
-              </div>
-
-              <form onSubmit={handleSuperAdminLogin} className="space-y-3.5 pt-1">
-                <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1">
-                    E-mail do Administrador
-                  </label>
-                  <div className="relative">
-                    <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type="email"
-                      required
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      placeholder="pedro.projetos0770@gmail.com"
-                      className="w-full pl-9 pr-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-amber-500"
-                    />
-                  </div>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs font-semibold text-slate-300">
-                      Senha Master
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setResetEmail(email || SUPER_ADMIN_CREDENTIALS.email);
-                        setResetError('');
-                        setResetSuccess('');
-                        setIsForgotMode(true);
-                      }}
-                      className="text-[11px] text-amber-400 hover:text-amber-300 hover:underline cursor-pointer flex items-center gap-1"
-                    >
-                      <KeyRound className="w-3 h-3 text-amber-400" />
-                      <span>Esqueci minha senha</span>
-                    </button>
-                  </div>
-                  <div className="relative">
-                    <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                    <input
-                      type={showPassword ? 'text' : 'password'}
-                      required
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      placeholder="••••••••"
-                      className="w-full pl-9 pr-10 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-amber-500 font-mono"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowPassword(!showPassword)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 cursor-pointer"
-                      title={showPassword ? 'Ocultar senha' : 'Ver senha'}
-                    >
-                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                </div>
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('tenant_manager');
+                    setErrorMsg('');
+                  }}
+                  className={`py-2 px-2.5 rounded-xl font-bold transition-all flex flex-col items-center gap-1 cursor-pointer ${
+                    activeTab === 'tenant_manager'
+                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-600/20'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Building2 className="w-4 h-4" />
+                  <span className="text-[11px]">Gerente</span>
+                </button>
 
                 <button
-                  type="submit"
-                  disabled={isLoading}
-                  className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 shadow-md shadow-amber-500/20"
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('professional');
+                    setErrorMsg('');
+                  }}
+                  className={`py-2 px-2.5 rounded-xl font-bold transition-all flex flex-col items-center gap-1 cursor-pointer ${
+                    activeTab === 'professional'
+                      ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Users className="w-4 h-4" />
+                  <span className="text-[11px]">Profissional</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('client');
+                    setErrorMsg('');
+                  }}
+                  className={`py-2 px-2.5 rounded-xl font-bold transition-all flex flex-col items-center gap-1 cursor-pointer ${
+                    activeTab === 'client'
+                      ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Sparkles className="w-4 h-4" />
+                  <span className="text-[11px]">Cliente</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setActiveTab('super_admin');
+                    setErrorMsg('');
+                  }}
+                  className={`py-2 px-2.5 rounded-xl font-bold transition-all flex flex-col items-center gap-1 cursor-pointer ${
+                    activeTab === 'super_admin'
+                      ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
                 >
                   <Shield className="w-4 h-4" />
-                  <span>Autenticar Credenciais Super Admin</span>
-                  <ArrowRight className="w-4 h-4" />
+                  <span className="text-[11px]">Super Admin</span>
                 </button>
-              </form>
-            </div>
-          )}
-
-          {/* TAB 2: GERENTE DO ESTABELECIMENTO */}
-          {activeTab === 'tenant_manager' && (
-            <div className="space-y-4">
-              <div className="p-3.5 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl text-xs space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-indigo-300 flex items-center gap-1.5">
-                    <Building2 className="w-3.5 h-3.5 text-indigo-400" />
-                    <span>Gerente de Unidade / Studio</span>
-                  </span>
-                  <span className="text-[10px] text-indigo-400 font-mono">Rota: /app/gerente/*</span>
-                </div>
-                <p className="text-[11px] text-slate-300 leading-relaxed">
-                  Gestão completa do seu estabelecimento: controle financeiro (caixa e comandas), equipe, serviços e regras de agendamento (isolado por tenant_id).
-                </p>
               </div>
 
-              {recentSignupNotice && (
-                <div className="p-3.5 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl text-xs space-y-1.5 animate-in fade-in">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-2 text-emerald-300 font-bold">
-                      <Sparkles className="w-4 h-4 text-emerald-400" />
-                      <span>Teste Grátis de 14 Dias Ativado</span>
+              {errorMsg && (
+                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-300 text-xs flex items-center gap-2 animate-in fade-in">
+                  <AlertCircle className="w-4 h-4 shrink-0 text-rose-400" />
+                  <span>{errorMsg}</span>
+                </div>
+              )}
+
+              {loginSuccess && (
+                <div className="p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs flex items-center gap-2 animate-in fade-in">
+                  <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400" />
+                  <span className="font-medium">{loginSuccess}</span>
+                </div>
+              )}
+
+              {/* TAB 1: GERENTE DO ESTABELECIMENTO */}
+              {activeTab === 'tenant_manager' && (
+                <div className="space-y-4">
+                  <div className="p-3.5 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl text-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-indigo-300 flex items-center gap-1.5">
+                        <Building2 className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Acesso Gerencial do Estabelecimento</span>
+                      </span>
+                      <span className="text-[10px] text-indigo-400 font-mono">Auto-Tenant</span>
+                    </div>
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      Informe suas credenciais. O sistema vinculará sua sessão diretamente ao seu estabelecimento com isolamento completo de dados.
+                    </p>
+                  </div>
+
+                  {recentSignupNotice && (
+                    <div className="p-3.5 bg-emerald-500/10 border border-emerald-500/30 rounded-2xl text-xs space-y-1.5 animate-in fade-in">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2 text-emerald-300 font-bold">
+                          <Sparkles className="w-4 h-4 text-emerald-400" />
+                          <span>Teste Grátis de 14 Dias Ativado</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => setRecentSignupNotice(null)}
+                          className="text-[10px] text-slate-400 hover:text-white cursor-pointer px-1 py-0.5"
+                        >
+                          Dispensar
+                        </button>
+                      </div>
+                      <p className="text-[11px] text-slate-300 leading-relaxed">
+                        {recentSignupNotice}
+                      </p>
+                    </div>
+                  )}
+
+                  <form onSubmit={handleManagerLogin} className="space-y-3.5">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-semibold text-slate-300">
+                          E-mail de Acesso do Gerente
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => handleFillDemo('tenant_manager')}
+                          className="text-[10px] text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
+                        >
+                          Preencher Demo
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="email"
+                          required
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          placeholder="gerente@estabelecimento.com"
+                          className="w-full pl-9 pr-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-indigo-500"
+                        />
+                      </div>
+                      {businesses.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                          <span className="text-[10px] text-slate-500">Contas salvas:</span>
+                          {businesses
+                            .filter((b) => b.managerEmail)
+                            .map((b) => (
+                              <button
+                                key={b.id}
+                                type="button"
+                                onClick={() => {
+                                  setEmail(b.managerEmail || '');
+                                  setPassword(b.managerPassword || '12345678');
+                                  setErrorMsg('');
+                                }}
+                                className="text-[10px] px-2 py-0.5 rounded-md bg-indigo-950/70 border border-indigo-500/30 text-indigo-300 hover:text-white hover:border-indigo-400 cursor-pointer transition-colors"
+                              >
+                                {b.tradeName || b.name} ({b.managerEmail})
+                              </button>
+                            ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-semibold text-slate-300">
+                          Senha de Acesso
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setResetEmail(email);
+                            setResetError('');
+                            setResetSuccess('');
+                            setIsForgotMode(true);
+                          }}
+                          className="text-[11px] text-indigo-400 hover:text-indigo-300 hover:underline cursor-pointer flex items-center gap-1"
+                        >
+                          <KeyRound className="w-3 h-3 text-indigo-400" />
+                          <span>Esqueci minha senha</span>
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type={showPassword ? 'text' : 'password'}
+                          required
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full pl-9 pr-10 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-indigo-500 font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 cursor-pointer"
+                          title={showPassword ? 'Ocultar senha' : 'Ver senha'}
+                        >
+                          {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={isLoading}
+                      className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-indigo-600/20 cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      <span>Entrar como Gerente</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  </form>
+                </div>
+              )}
+
+              {/* TAB 2: PROFISSIONAL / PRESTADOR */}
+              {activeTab === 'professional' && (
+                <div className="space-y-4">
+                  <div className="p-3.5 bg-blue-500/10 border border-blue-500/20 rounded-2xl text-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-blue-300 flex items-center gap-1.5">
+                        <Users className="w-3.5 h-3.5 text-blue-400" />
+                        <span>Portal do Profissional</span>
+                      </span>
+                      <span className="text-[10px] text-blue-400 font-mono">Auto-Tenant</span>
+                    </div>
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      Acesso individual à sua agenda, serviços e comissões. Seu estabelecimento e cadastro são identificados automaticamente no login.
+                    </p>
+                  </div>
+
+                  <form onSubmit={handleProfessionalLogin} className="space-y-3.5">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-semibold text-slate-300">
+                          E-mail de Login do Profissional
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => handleFillDemo('professional')}
+                          className="text-[10px] text-blue-400 hover:text-blue-300 underline cursor-pointer"
+                        >
+                          Preencher Demo
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="email"
+                          required
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          placeholder="pro@studiodigital.com"
+                          className="w-full pl-9 pr-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-blue-500"
+                        />
+                      </div>
+                      {professionals.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                          <span className="text-[10px] text-slate-500">Profissionais salvos:</span>
+                          {professionals
+                            .filter((p) => p.email)
+                            .map((p) => (
+                              <button
+                                key={p.id}
+                                type="button"
+                                onClick={() => {
+                                  setEmail(p.email);
+                                  setPassword(p.password || '12345678');
+                                  setErrorMsg('');
+                                }}
+                                className="text-[10px] px-2 py-0.5 rounded-md bg-blue-950/70 border border-blue-500/30 text-blue-300 hover:text-white hover:border-blue-400 cursor-pointer transition-colors"
+                              >
+                                {p.name} ({p.email})
+                              </button>
+                            ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-semibold text-slate-300">
+                          Senha de Acesso
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setResetEmail(email);
+                            setResetError('');
+                            setResetSuccess('');
+                            setIsForgotMode(true);
+                          }}
+                          className="text-[11px] text-blue-400 hover:text-blue-300 hover:underline cursor-pointer flex items-center gap-1"
+                        >
+                          <KeyRound className="w-3 h-3 text-blue-400" />
+                          <span>Esqueci minha senha</span>
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type={showPassword ? 'text' : 'password'}
+                          required
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full pl-9 pr-10 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-blue-500 font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 cursor-pointer"
+                          title={showPassword ? 'Ocultar senha' : 'Ver senha'}
+                        >
+                          {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={isLoading}
+                      className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-blue-600/20 cursor-pointer flex items-center justify-center gap-2"
+                    >
+                      <span>Entrar como Profissional</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  </form>
+                </div>
+              )}
+
+              {/* TAB 3: SUPER ADMIN */}
+              {activeTab === 'super_admin' && (
+                <div className="space-y-4">
+                  <div className="p-3.5 bg-slate-950/90 border border-amber-500/30 rounded-2xl text-xs space-y-2 shadow-inner">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-amber-400 flex items-center gap-1.5">
+                        <Shield className="w-4 h-4 text-amber-400" />
+                        <span>Acesso Restrito · Super Admin (CEO)</span>
+                      </span>
+                      <span className="text-[10px] text-amber-400/90 font-mono bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20">
+                        Área Master
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      Painel de controle de todos os tenants da plataforma SaaS, planos e métricas globais.
+                    </p>
+                  </div>
+
+                  <form onSubmit={handleSuperAdminLogin} className="space-y-3.5 pt-1">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-semibold text-slate-300">
+                          E-mail do Administrador
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => handleFillDemo('super_admin')}
+                          className="text-[10px] text-amber-400 hover:text-amber-300 underline cursor-pointer"
+                        >
+                          Preencher Demo
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="email"
+                          required
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          placeholder="pedro.projetos0770@gmail.com"
+                          className="w-full pl-9 pr-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-amber-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-semibold text-slate-300">
+                          Senha Master
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setResetEmail(email || SUPER_ADMIN_CREDENTIALS.email);
+                            setResetError('');
+                            setResetSuccess('');
+                            setIsForgotMode(true);
+                          }}
+                          className="text-[11px] text-amber-400 hover:text-amber-300 hover:underline cursor-pointer flex items-center gap-1"
+                        >
+                          <KeyRound className="w-3 h-3 text-amber-400" />
+                          <span>Esqueci minha senha</span>
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type={showPassword ? 'text' : 'password'}
+                          required
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full pl-9 pr-10 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-amber-500 font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 cursor-pointer"
+                          title={showPassword ? 'Ocultar senha' : 'Ver senha'}
+                        >
+                          {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={isLoading}
+                      className="w-full py-2.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 shadow-md shadow-amber-500/20"
+                    >
+                      <Shield className="w-4 h-4" />
+                      <span>Entrar como Super Admin</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  </form>
+                </div>
+              )}
+
+              {/* TAB 4: CLIENTE / CONSUMIDOR */}
+              {activeTab === 'client' && (
+                <div className="space-y-4">
+                  <div className="p-3.5 bg-emerald-500/10 border border-emerald-500/20 rounded-2xl text-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-emerald-300 flex items-center gap-1.5">
+                        <Sparkles className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Portal do Cliente</span>
+                      </span>
+                      <span className="text-[10px] text-emerald-400 font-mono">Área Pessoal</span>
+                    </div>
+                    <p className="text-[11px] text-slate-300 leading-relaxed">
+                      Consulte seus agendamentos, reserve novos serviços e gerencie seu histórico no Studio Digital.
+                    </p>
+                  </div>
+
+                  {/* Public Signup Callout */}
+                  <div className="p-3 bg-slate-950 border border-emerald-500/30 rounded-2xl text-xs flex items-center justify-between gap-3 shadow-inner">
+                    <div>
+                      <span className="font-bold text-emerald-300 block">Novo no Studio Digital?</span>
+                      <span className="text-[11px] text-slate-400">Crie sua conta pessoal gratuita em menos de 1 minuto.</span>
                     </div>
                     <button
                       type="button"
-                      onClick={() => setRecentSignupNotice(null)}
-                      className="text-[10px] text-slate-400 hover:text-white cursor-pointer px-1 py-0.5"
+                      onClick={() => navigateTo('/cadastro')}
+                      className="px-3 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded-xl transition-all cursor-pointer shrink-0 shadow-md shadow-emerald-500/20"
                     >
-                      Dispensar
+                      Cadastre-se
                     </button>
                   </div>
-                  <p className="text-[11px] text-slate-300 leading-relaxed">
-                    {recentSignupNotice}
-                  </p>
-                </div>
-              )}
 
-              {businesses.length === 0 ? (
-                <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl text-center space-y-2 text-xs">
-                  <p className="text-slate-400">
-                    Nenhum estabelecimento cadastrado no banco de dados.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveTab('super_admin');
-                      setEmail('');
-                      setPassword('');
-                    }}
-                    className="px-3 py-1.5 bg-amber-500 text-slate-950 font-bold rounded-lg text-xs cursor-pointer"
-                  >
-                    Acessar como Super Admin para cadastrar
-                  </button>
-                </div>
-              ) : (
-                <form onSubmit={handleManagerLogin} className="space-y-3.5">
-                  <div>
-                    <label className="text-xs font-semibold text-slate-300 block mb-1">
-                      Selecione o Estabelecimento (Tenant)
-                    </label>
-                    <select
-                      value={selectedTenantId}
-                      onChange={(e) => {
-                        const tId = e.target.value;
-                        setSelectedTenantId(tId);
-                        const b = businesses.find((biz) => biz.id === tId);
-                        if (b) {
-                          setEmail(b.managerEmail || `gerente@${b.tradeName.toLowerCase().replace(/\s+/g, '')}.com`);
-                        }
-                      }}
-                      className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-indigo-500"
+                  <form onSubmit={handleClientLogin} className="space-y-3.5">
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-semibold text-slate-300">
+                          E-mail do Cliente
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => handleFillDemo('client')}
+                          className="text-[10px] text-emerald-400 hover:text-emerald-300 underline cursor-pointer"
+                        >
+                          Preencher Demo
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="email"
+                          required
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          placeholder="cliente@exemplo.com"
+                          className="w-full pl-9 pr-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500"
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="flex items-center justify-between mb-1">
+                        <label className="text-xs font-semibold text-slate-300">
+                          Sua Senha
+                        </label>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setResetEmail(email);
+                            setResetError('');
+                            setResetSuccess('');
+                            setIsForgotMode(true);
+                          }}
+                          className="text-[11px] text-emerald-400 hover:text-emerald-300 hover:underline cursor-pointer flex items-center gap-1"
+                        >
+                          <KeyRound className="w-3 h-3 text-emerald-400" />
+                          <span>Esqueci minha senha</span>
+                        </button>
+                      </div>
+                      <div className="relative">
+                        <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type={showPassword ? 'text' : 'password'}
+                          required
+                          value={password}
+                          onChange={(e) => setPassword(e.target.value)}
+                          placeholder="••••••••"
+                          className="w-full pl-9 pr-10 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500 font-mono"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowPassword(!showPassword)}
+                          className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 cursor-pointer"
+                          title={showPassword ? 'Ocultar senha' : 'Ver senha'}
+                        >
+                          {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                        </button>
+                      </div>
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={isLoading}
+                      className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-emerald-600/20 cursor-pointer flex items-center justify-center gap-2"
                     >
-                      {businesses.map((b) => (
-                        <option key={b.id} value={b.id}>
-                          {b.tradeName} ({b.city} - {b.state})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-semibold text-slate-300">
-                        E-mail de Acesso do Gerente
-                      </label>
-                      {selectedTenantId && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const b = businesses.find((biz) => biz.id === selectedTenantId);
-                            if (b) {
-                              setEmail(b.managerEmail || `gerente@${b.tradeName.toLowerCase().replace(/\s+/g, '')}.com`);
-                              setPassword(b.managerPassword || 'gerente123');
-                            }
-                          }}
-                          className="text-[10px] text-indigo-400 hover:text-indigo-300 underline cursor-pointer"
-                        >
-                          Usar credencial cadastrada
-                        </button>
-                      )}
-                    </div>
-                    <div className="relative">
-                      <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                      <input
-                        type="email"
-                        required
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        placeholder="gerente@estabelecimento.com"
-                        className="w-full pl-9 pr-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-indigo-500"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-semibold text-slate-300">
-                        Senha de Acesso (Firebase Auth)
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setResetEmail(email);
-                          setResetError('');
-                          setResetSuccess('');
-                          setIsForgotMode(true);
-                        }}
-                        className="text-[11px] text-indigo-400 hover:text-indigo-300 hover:underline cursor-pointer flex items-center gap-1"
-                      >
-                        <KeyRound className="w-3 h-3 text-indigo-400" />
-                        <span>Esqueci minha senha</span>
-                      </button>
-                    </div>
-                    <div className="relative">
-                      <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                      <input
-                        type={showPassword ? 'text' : 'password'}
-                        required
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="••••••••"
-                        className="w-full pl-9 pr-10 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-indigo-500 font-mono"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 cursor-pointer"
-                        title={showPassword ? 'Ocultar senha' : 'Ver senha'}
-                      >
-                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={isLoading}
-                    className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-indigo-600/20 cursor-pointer flex items-center justify-center gap-2"
-                  >
-                    <span>Autenticar Gerente (Firebase Auth)</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </button>
-                </form>
-              )}
-            </div>
-          )}
-
-          {/* TAB 3: PROFISSIONAL / PRESTADOR */}
-          {activeTab === 'professional' && (
-            <div className="space-y-4">
-              <div className="p-3.5 bg-blue-500/10 border border-blue-500/20 rounded-2xl text-xs space-y-2">
-                <div className="flex items-center justify-between">
-                  <span className="font-bold text-blue-300 flex items-center gap-1.5">
-                    <Users className="w-3.5 h-3.5 text-blue-400" />
-                    <span>Profissional / Prestador de Serviço</span>
-                  </span>
-                  <span className="text-[10px] text-blue-400 font-mono">Rota: /app/profissional/*</span>
+                      <Sparkles className="w-4 h-4" />
+                      <span>Entrar como Cliente</span>
+                      <ArrowRight className="w-4 h-4" />
+                    </button>
+                  </form>
                 </div>
-                <p className="text-[11px] text-slate-300 leading-relaxed">
-                  Visualização restrita à própria agenda diária/semanal, marcação de status dos atendimentos e consulta individual de comissões e ganhos.
-                </p>
-              </div>
-
-              {professionals.length === 0 ? (
-                <div className="p-4 bg-slate-950 border border-slate-800 rounded-2xl text-center space-y-2 text-xs">
-                  <p className="text-slate-400">
-                    Nenhum profissional cadastrado na base ainda.
-                  </p>
-                  <p className="text-[11px] text-slate-500">
-                    Cadastre profissionais pelo painel do gerente com e-mail e senha de acesso.
-                  </p>
-                </div>
-              ) : (
-                <form onSubmit={handleProfessionalLogin} className="space-y-3.5">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                    <div>
-                      <label className="text-xs font-semibold text-slate-300 block mb-1">
-                        Estabelecimento (Tenant)
-                      </label>
-                      <select
-                        value={selectedTenantId}
-                        onChange={(e) => {
-                          const tId = e.target.value;
-                          setSelectedTenantId(tId);
-                          const pros = professionals.filter((p) => p.businessId === tId);
-                          if (pros.length > 0) {
-                            setSelectedProId(pros[0].id);
-                            setEmail(pros[0].email);
-                            setPassword(pros[0].password || 'pro123');
-                          }
-                        }}
-                        className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-blue-500"
-                      >
-                        {businesses.map((b) => (
-                          <option key={b.id} value={b.id}>
-                            {b.tradeName}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-
-                    <div>
-                      <label className="text-xs font-semibold text-slate-300 block mb-1">
-                        Profissional Cadastrado
-                      </label>
-                      <select
-                        value={selectedProId}
-                        onChange={(e) => {
-                          const pId = e.target.value;
-                          setSelectedProId(pId);
-                          const p = professionals.find((pro) => pro.id === pId);
-                          if (p) {
-                            setEmail(p.email);
-                            setPassword(p.password || 'pro123');
-                          }
-                        }}
-                        className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-blue-500"
-                      >
-                        {professionals
-                          .filter((p) => !selectedTenantId || p.businessId === selectedTenantId)
-                          .map((p) => (
-                            <option key={p.id} value={p.id}>
-                              {p.name}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-semibold text-slate-300">
-                        E-mail de Login do Profissional
-                      </label>
-                      {selectedProId && (
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const p = professionals.find((pro) => pro.id === selectedProId);
-                            if (p) {
-                              setEmail(p.email);
-                              setPassword(p.password || 'pro123');
-                            }
-                          }}
-                          className="text-[10px] text-blue-400 hover:text-blue-300 underline cursor-pointer"
-                        >
-                          Usar credencial cadastrada
-                        </button>
-                      )}
-                    </div>
-                    <div className="relative">
-                      <Mail className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                      <input
-                        type="email"
-                        required
-                        value={email}
-                        onChange={(e) => setEmail(e.target.value)}
-                        placeholder="pro@studiodigital.com"
-                        className="w-full pl-9 pr-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-blue-500"
-                      />
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="flex items-center justify-between mb-1">
-                      <label className="text-xs font-semibold text-slate-300">
-                        Senha de Acesso (Firebase Auth)
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setResetEmail(email);
-                          setResetError('');
-                          setResetSuccess('');
-                          setIsForgotMode(true);
-                        }}
-                        className="text-[11px] text-blue-400 hover:text-blue-300 hover:underline cursor-pointer flex items-center gap-1"
-                      >
-                        <KeyRound className="w-3 h-3 text-blue-400" />
-                        <span>Esqueci minha senha</span>
-                      </button>
-                    </div>
-                    <div className="relative">
-                      <Lock className="w-4 h-4 text-slate-500 absolute left-3 top-1/2 -translate-y-1/2" />
-                      <input
-                        type={showPassword ? 'text' : 'password'}
-                        required
-                        value={password}
-                        onChange={(e) => setPassword(e.target.value)}
-                        placeholder="••••••••"
-                        className="w-full pl-9 pr-10 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-blue-500 font-mono"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 cursor-pointer"
-                        title={showPassword ? 'Ocultar senha' : 'Ver senha'}
-                      >
-                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                      </button>
-                    </div>
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={isLoading}
-                    className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl transition-all shadow-md shadow-blue-600/20 cursor-pointer flex items-center justify-center gap-2"
-                  >
-                    <span>Autenticar Profissional (Firebase Auth)</span>
-                    <ArrowRight className="w-4 h-4" />
-                  </button>
-                </form>
               )}
-            </div>
+            </>
           )}
-        </>
-      )}
 
           {/* Divider */}
           <div className="relative flex items-center justify-center pt-2">
             <div className="border-t border-slate-800 w-full" />
             <span className="bg-slate-900 px-3 text-[10px] text-slate-500 uppercase tracking-wider font-semibold">
-              ou login seguro
+              ou login automático
             </span>
             <div className="border-t border-slate-800 w-full" />
           </div>
@@ -856,14 +933,14 @@ export const UnifiedLoginPage: React.FC = () => {
                 d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
               />
             </svg>
-            <span>Entrar com Google (Firebase Authentication)</span>
+            <span>Entrar com Google (Identificação Automática)</span>
           </button>
         </div>
       </div>
 
       {/* Footer */}
       <div className="max-w-md w-full mx-auto text-center z-10 text-[11px] text-slate-500">
-        <span>Studio Digital SaaS · Controle de Acesso Baseado em Funções (RBAC)</span>
+        <span>Studio Digital SaaS · Controle de Acesso Baseado em Funções (RBAC Multi-Tenant)</span>
       </div>
     </div>
   );

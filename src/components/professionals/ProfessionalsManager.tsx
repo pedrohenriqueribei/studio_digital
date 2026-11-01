@@ -19,10 +19,12 @@ import {
   Eye,
   EyeOff,
   Key,
+  Star,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Professional, UserRole } from '../../types';
 import { slugify } from '../../utils/slugify';
+import { MaskedInput } from '../ui/MaskedInput';
 
 export const ProfessionalsManager: React.FC = () => {
   const {
@@ -214,11 +216,19 @@ export const ProfessionalsManager: React.FC = () => {
                       <h4 className="text-sm font-bold text-slate-900 leading-snug">
                         {pro.name}
                       </h4>
-                      <span
-                        className={`inline-block mt-1 text-[10px] px-2 py-0.5 rounded border font-semibold ${roleBadge.bg}`}
-                      >
-                        {roleBadge.label}
-                      </span>
+                      <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                        <span
+                          className={`text-[10px] px-2 py-0.5 rounded border font-semibold ${roleBadge.bg}`}
+                        >
+                          {roleBadge.label}
+                        </span>
+                        {pro.averageRating !== undefined && (
+                          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-amber-300 bg-amber-50 text-amber-900 font-bold">
+                            <Star className="w-2.5 h-2.5 fill-amber-400 text-amber-400" />
+                            <span>{pro.averageRating.toFixed(1)}</span>
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
 
@@ -392,22 +402,15 @@ export const ProfessionalsManager: React.FC = () => {
                 />
               </div>
 
-              <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">
-                  Telefone / WhatsApp
-                </label>
-                <div className="relative">
-                  <Phone className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
-                  <input
-                    type="text"
-                    required
-                    value={formData.phone}
-                    onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
-                    placeholder="(11) 98765-4321"
-                    className="w-full pl-8 pr-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500"
-                  />
-                </div>
-              </div>
+              <MaskedInput
+                maskType="phone"
+                label="Telefone / WhatsApp"
+                required
+                value={formData.phone}
+                leftIcon={<Phone className="w-3.5 h-3.5" />}
+                onValueChange={(cleanVal) => setFormData({ ...formData, phone: cleanVal })}
+                helperText="Formatação dinâmica com DDD (fixo ou celular)"
+              />
 
               {/* Credenciais de Acesso (Login Firebase Auth) */}
               <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">

@@ -101,7 +101,7 @@ export const ProfessionalProfilePage: React.FC = () => {
   }) => {
     if (!professional || !business) return;
 
-    addAppointment({
+    const res = addAppointment({
       businessId: business.id,
       clientId: `cli_${Date.now()}`,
       clientName: appointmentData.clientName,
@@ -118,6 +118,15 @@ export const ProfessionalProfilePage: React.FC = () => {
       paymentStatus: 'pendente',
       notes: appointmentData.notes,
     });
+
+    if (res && !res.success) {
+      addNotification({
+        title: 'Agendamento não realizado',
+        message: res.error || 'Horário ou cliente em conflito de agendamento.',
+        type: 'system',
+      });
+      return;
+    }
 
     addNotification({
       title: 'Novo Agendamento Online!',
@@ -348,6 +357,15 @@ export const ProfessionalProfilePage: React.FC = () => {
                   <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-amber-100 text-amber-900 border border-amber-200/60 capitalize">
                     {professional.role === 'ceo' ? 'Diretor & Especialista' : professional.role}
                   </span>
+                  {professional.averageRating !== undefined && (
+                    <span className="text-xs px-2.5 py-0.5 rounded-full font-bold bg-amber-50 text-amber-900 border border-amber-300 flex items-center gap-1 shadow-xs">
+                      <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                      <span>{professional.averageRating.toFixed(1)}</span>
+                      <span className="text-[10px] text-amber-700/80 font-normal">
+                        ({professional.totalReviews || 1} {professional.totalReviews === 1 ? 'avaliação' : 'avaliações'})
+                      </span>
+                    </span>
+                  )}
                 </div>
 
                 {/* Metadata row */}
@@ -745,6 +763,7 @@ export const ProfessionalProfilePage: React.FC = () => {
         services={professionalServices}
         initialServiceId={selectedServiceIdForModal}
         appointments={appointments}
+        allProfessionals={professionals}
         onConfirmBooking={handleConfirmBooking}
       />
     </div>

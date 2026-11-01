@@ -49,8 +49,14 @@ export const RBACClaimsBar: React.FC = () => {
         role: 'tenant_manager',
         tenant_id: tenantId,
       });
+    } else if (role === 'client') {
+      switchRole('client');
+      setSimulatedClaims({
+        role: 'client',
+        client_id: 'cli_demo',
+      });
       setIsSuperAdminView(false);
-      navigateTo('/app/gerente/dashboard');
+      navigateTo('/app/cliente');
     } else {
       const tenantId = activeClaims?.tenant_id || currentBusiness?.id || businesses[0]?.id;
       if (tenantId) switchBusiness(tenantId);
@@ -76,7 +82,7 @@ export const RBACClaimsBar: React.FC = () => {
   return (
     <aside
       aria-label="Barra de diagnóstico RBAC e Custom Claims"
-      className="fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 backdrop-blur-md border-t border-slate-800 text-white text-xs transition-all shadow-2xl"
+      className="hidden md:block fixed bottom-0 left-0 right-0 z-40 bg-slate-950/95 backdrop-blur-md border-t border-slate-800 text-white text-xs transition-all shadow-2xl"
     >
       <div className="max-w-7xl mx-auto px-3 sm:px-6 py-2 flex items-center justify-between gap-3">
         {/* Left: Active Role Badge */}
@@ -92,6 +98,8 @@ export const RBACClaimsBar: React.FC = () => {
                 ? 'Super Admin (CEO Pedro)'
                 : userRole === 'tenant_manager'
                 ? 'Gerente (Tenant Manager)'
+                : userRole === 'client'
+                ? 'Cliente (Área Pessoal)'
                 : 'Profissional / Especialista'}
             </span>
             {activeClaims?.tenant_id && (
@@ -131,6 +139,14 @@ export const RBACClaimsBar: React.FC = () => {
               }`}
             >
               Profissional
+            </button>
+            <button
+              onClick={() => handleRoleQuickSwitch('client')}
+              className={`px-2 py-0.5 rounded font-semibold transition-colors cursor-pointer ${
+                userRole === 'client' ? 'bg-emerald-600 text-white font-bold' : 'text-slate-400 hover:text-white'
+              }`}
+            >
+              Cliente
             </button>
           </div>
 

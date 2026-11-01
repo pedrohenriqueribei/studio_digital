@@ -25,9 +25,12 @@ import {
   Key,
   Eye,
   EyeOff,
+  Scissors,
+  Clock,
+  Percent,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
-import { Business, BusinessType, Professional, SaaSPlan, TenantStatus, UserRole } from '../../types';
+import { Business, BusinessType, Professional, SaaSPlan, Service, TenantStatus, UserRole } from '../../types';
 import { slugify } from '../../utils/slugify';
 import { SuperAdminClaimsManager } from './SuperAdminClaimsManager';
 
@@ -47,6 +50,11 @@ export const SuperAdminDashboard: React.FC = () => {
     addProfessional,
     updateProfessional,
     deleteProfessional,
+    services,
+    addService,
+    updateService,
+    deleteService,
+    addNotification,
     saasPlans,
     addSaasPlan,
     updateSaasPlan,
@@ -102,6 +110,27 @@ export const SuperAdminDashboard: React.FC = () => {
     description: '',
   });
 
+  // Services Management State for CEO (Network-wide)
+  const [serviceSearch, setServiceSearch] = useState('');
+  const [serviceTenantFilter, setServiceTenantFilter] = useState<string>('all');
+  const [serviceCategoryFilter, setServiceCategoryFilter] = useState<string>('all');
+  const [isServiceModalOpen, setIsServiceModalOpen] = useState(false);
+  const [editingServiceItem, setEditingServiceItem] = useState<Service | null>(null);
+  const [serviceToDeleteItem, setServiceToDeleteItem] = useState<Service | null>(null);
+  const [serviceFormError, setServiceFormError] = useState('');
+  const [serviceFormData, setServiceFormData] = useState({
+    businessId: '',
+    name: '',
+    category: 'Facial',
+    durationMinutes: 45,
+    price: 150,
+    commissionPercentage: 50,
+    description: '',
+    allowedProfessionalIds: [] as string[],
+    active: true,
+  });
+  const [serviceAssociationMode, setServiceAssociationMode] = useState<'all' | 'specific'>('all');
+
   // Filtered Tenants
   const filteredTenants = useMemo(() => {
     return businesses.filter((b) => {
@@ -137,6 +166,31 @@ export const SuperAdminDashboard: React.FC = () => {
       return true;
     });
   }, [professionals, proTenantFilter, proSearch, businesses]);
+
+  // Filtered Services across all tenants for CEO
+  const filteredServices = useMemo(() => {
+    return services.filter((s) => {
+      if (serviceTenantFilter !== 'all' && s.businessId !== serviceTenantFilter) return false;
+      if (serviceCategoryFilter !== 'all' && s.category !== serviceCategoryFilter) return false;
+      if (serviceSearch.trim()) {
+        const q = serviceSearch.toLowerCase();
+        const b = businesses.find((biz) => biz.id === s.businessId);
+        const matchesName = s.name.toLowerCase().includes(q);
+        const matchesDesc = (s.description || '').toLowerCase().includes(q);
+        const matchesBiz = b?.tradeName.toLowerCase().includes(q) || false;
+        if (!matchesName && !matchesDesc && !matchesBiz) return false;
+      }
+      return true;
+    });
+  }, [services, serviceTenantFilter, serviceCategoryFilter, serviceSearch, businesses]);
+
+  const serviceCategories = useMemo(() => {
+    const set = new Set<string>();
+    services.forEach((s) => {
+      if (s.category) set.add(s.category.trim());
+    });
+    return Array.from(set).sort();
+  }, [services]);
 
   // Global Platform Metrics
   const platformStats = useMemo(() => {
@@ -363,6 +417,7 @@ export const SuperAdminDashboard: React.FC = () => {
         {[
           { id: 'tenants', label: 'Gestão de Tenants (Estabelecimentos)', icon: Building2, count: businesses.length },
           { id: 'profissionais', label: 'Gestão Global de Profissionais', icon: Users, count: professionals.length },
+          { id: 'servicos', label: 'Catálogo de Serviços da Rede', icon: Scissors, count: services.length },
           { id: 'planos', label: 'Planos de Contratação SaaS', icon: Crown, count: saasPlans.length },
           { id: 'metricas', label: 'Visão Geral & Métricas da Plataforma', icon: TrendingUp },
           { id: 'claims', label: 'Custom Claims & RBAC', icon: Key },
@@ -791,6 +846,228 @@ export const SuperAdminDashboard: React.FC = () => {
                       </tr>
                     );
                   })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TAB: CATÁLOGO DE SERVIÇOS DA REDE (SUPER ADMIN / CEO) */}
+      {superAdminTab === 'servicos' && (
+        <div className="space-y-4">
+          <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs flex flex-col md:flex-row items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2 w-full md:w-auto">
+              <div className="relative flex-1 md:w-72">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={serviceSearch}
+                  onChange={(e) => setServiceSearch(e.target.value)}
+                  placeholder="Buscar serviço por nome ou estabelecimento..."
+                  className="w-full pl-9 pr-3 py-1.5 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-400 bg-slate-50 focus:bg-white"
+                />
+              </div>
+
+              <select
+                value={serviceTenantFilter}
+                onChange={(e) => setServiceTenantFilter(e.target.value)}
+                className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 text-slate-700 focus:outline-none"
+              >
+                <option value="all">Todos os Estabelecimentos</option>
+                {businesses.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.tradeName}
+                  </option>
+                ))}
+              </select>
+
+              {serviceCategories.length > 0 && (
+                <select
+                  value={serviceCategoryFilter}
+                  onChange={(e) => setServiceCategoryFilter(e.target.value)}
+                  className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-slate-50 text-slate-700 focus:outline-none"
+                >
+                  <option value="all">Todas as Categorias</option>
+                  {serviceCategories.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+
+            <button
+              onClick={() => {
+                setEditingServiceItem(null);
+                setServiceFormError('');
+                setServiceAssociationMode('all');
+                setServiceFormData({
+                  businessId: businesses[0]?.id || '',
+                  name: '',
+                  category: 'Geral',
+                  durationMinutes: 45,
+                  price: 120,
+                  commissionPercentage: 50,
+                  description: '',
+                  allowedProfessionalIds: [],
+                  active: true,
+                });
+                setIsServiceModalOpen(true);
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer self-start md:self-auto"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>+ Cadastrar Serviço para Estabelecimento</span>
+            </button>
+          </div>
+
+          {/* Services Table for CEO */}
+          <div className="bg-white rounded-xl border border-slate-200 shadow-2xs overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-xs">
+                <thead className="bg-slate-50 border-b border-slate-200 text-slate-500 font-bold uppercase tracking-wider text-[10px]">
+                  <tr>
+                    <th className="px-4 py-3">Estabelecimento (Tenant)</th>
+                    <th className="px-4 py-3">Serviço & Categoria</th>
+                    <th className="px-4 py-3">Duração</th>
+                    <th className="px-4 py-3">Preço</th>
+                    <th className="px-4 py-3">Comissão</th>
+                    <th className="px-4 py-3">Profissionais Habilitados</th>
+                    <th className="px-4 py-3">Status</th>
+                    <th className="px-4 py-3 text-right">Ações</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {filteredServices.map((service) => {
+                    const tenant = businesses.find((b) => b.id === service.businessId);
+                    const tenantPros = professionals.filter((p) => p.businessId === service.businessId);
+                    const isAll =
+                      !service.allowedProfessionalIds || service.allowedProfessionalIds.length === 0;
+                    const assigned = isAll
+                      ? tenantPros
+                      : tenantPros.filter((p) => service.allowedProfessionalIds.includes(p.id));
+
+                    return (
+                      <tr key={service.id} className="hover:bg-slate-50/70 transition-colors">
+                        <td className="px-4 py-3">
+                          <span className="font-bold text-slate-800 block">
+                            {tenant?.tradeName || 'Estabelecimento'}
+                          </span>
+                          <span className="text-[10px] text-slate-400 font-mono">
+                            ID: {service.businessId}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className="font-bold text-slate-900 block">{service.name}</span>
+                          <span className="text-[11px] text-slate-400">{service.category || 'Geral'}</span>
+                        </td>
+                        <td className="px-4 py-3 font-mono text-slate-700">
+                          {service.durationMinutes} min
+                        </td>
+                        <td className="px-4 py-3 font-mono font-bold text-slate-900">
+                          R$ {service.price.toFixed(2)}
+                        </td>
+                        <td className="px-4 py-3 font-mono text-emerald-700 font-semibold">
+                          {service.commissionPercentage}%
+                        </td>
+                        <td className="px-4 py-3">
+                          {isAll ? (
+                            <span className="inline-flex items-center gap-1 text-[11px] text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded font-medium">
+                              <CheckCircle2 className="w-3 h-3" />
+                              Todos os profissionais ({tenantPros.length})
+                            </span>
+                          ) : (
+                            <div className="flex items-center gap-1 flex-wrap">
+                              {assigned.map((p) => (
+                                <span
+                                  key={p.id}
+                                  className="px-1.5 py-0.5 bg-slate-100 rounded text-[10px] text-slate-700 font-medium"
+                                >
+                                  {p.name.split(' ')[0]}
+                                </span>
+                              ))}
+                              {assigned.length === 0 && (
+                                <span className="text-rose-600 font-bold text-[10px]">
+                                  Nenhum associado
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                              service.active
+                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                                : 'bg-slate-100 text-slate-500 border border-slate-200'
+                            }`}
+                          >
+                            {service.active ? 'Ativo' : 'Inativo'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => {
+                                switchBusiness(service.businessId);
+                                setIsSuperAdminView(false);
+                                navigateTo('/app/gerente/servicos');
+                              }}
+                              className="px-2 py-1 text-[11px] bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg font-semibold transition-colors cursor-pointer"
+                              title="Acessar estúdio deste serviço"
+                            >
+                              Ver no Studio
+                            </button>
+                            <button
+                              onClick={() => {
+                                setEditingServiceItem(service);
+                                setServiceFormError('');
+                                const hasSpec =
+                                  service.allowedProfessionalIds &&
+                                  service.allowedProfessionalIds.length > 0;
+                                setServiceAssociationMode(hasSpec ? 'specific' : 'all');
+                                setServiceFormData({
+                                  businessId: service.businessId,
+                                  name: service.name,
+                                  category: service.category || 'Geral',
+                                  durationMinutes: service.durationMinutes || 45,
+                                  price: service.price || 0,
+                                  commissionPercentage:
+                                    service.commissionPercentage !== undefined
+                                      ? service.commissionPercentage
+                                      : 50,
+                                  description: service.description || '',
+                                  allowedProfessionalIds: service.allowedProfessionalIds || [],
+                                  active: service.active !== false,
+                                });
+                                setIsServiceModalOpen(true);
+                              }}
+                              className="p-1.5 text-slate-400 hover:text-slate-900 hover:bg-slate-100 rounded-lg cursor-pointer"
+                              title="Editar serviço"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => setServiceToDeleteItem(service)}
+                              className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg cursor-pointer"
+                              title="Excluir serviço"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                  {filteredServices.length === 0 && (
+                    <tr>
+                      <td colSpan={8} className="p-8 text-center text-slate-500">
+                        Nenhum serviço encontrado no catálogo da rede com os filtros aplicados.
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
@@ -1599,6 +1876,326 @@ export const SuperAdminDashboard: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* MODAL CEO: CADASTRO / EDIÇÃO DE SERVIÇO EM TENANT */}
+      {isServiceModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg my-6 overflow-hidden flex flex-col max-h-[92vh]">
+            <div className="px-6 py-4 border-b border-slate-100 bg-slate-50/70 flex items-center justify-between shrink-0">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  {editingServiceItem ? `Editar Serviço: ${editingServiceItem.name}` : 'Cadastrar Serviço para Estabelecimento'}
+                </h3>
+                <p className="text-xs text-slate-500">Painel Master do CEO · Catálogo da Rede</p>
+              </div>
+              <button
+                onClick={() => setIsServiceModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                setServiceFormError('');
+                if (!serviceFormData.businessId) {
+                  setServiceFormError('Selecione o estabelecimento para o serviço.');
+                  return;
+                }
+                if (!serviceFormData.name.trim()) {
+                  setServiceFormError('Informe o nome do serviço.');
+                  return;
+                }
+                if (serviceFormData.durationMinutes <= 0) {
+                  setServiceFormError('A duração deve ser de pelo menos 5 minutos.');
+                  return;
+                }
+                const allowed =
+                  serviceAssociationMode === 'all' ? [] : serviceFormData.allowedProfessionalIds;
+
+                if (editingServiceItem) {
+                  updateService({
+                    ...editingServiceItem,
+                    ...serviceFormData,
+                    allowedProfessionalIds: allowed,
+                  });
+                } else {
+                  addService({
+                    ...serviceFormData,
+                    allowedProfessionalIds: allowed,
+                  });
+                }
+                setIsServiceModalOpen(false);
+              }}
+              className="p-6 space-y-4 overflow-y-auto"
+            >
+              {serviceFormError && (
+                <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs flex items-center gap-2">
+                  <AlertTriangle className="w-4 h-4 shrink-0" />
+                  <span>{serviceFormError}</span>
+                </div>
+              )}
+
+              {/* Estabelecimento */}
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Estabelecimento / Tenant <span className="text-rose-500">*</span>
+                </label>
+                <select
+                  value={serviceFormData.businessId}
+                  disabled={!!editingServiceItem}
+                  onChange={(e) =>
+                    setServiceFormData({ ...serviceFormData, businessId: e.target.value })
+                  }
+                  required
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-slate-500 bg-white"
+                >
+                  <option value="">Selecione o estabelecimento...</option>
+                  {businesses.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.tradeName} ({b.city} - {b.state})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Nome */}
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Nome do Serviço / Procedimento <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={serviceFormData.name}
+                  onChange={(e) =>
+                    setServiceFormData({ ...serviceFormData, name: e.target.value })
+                  }
+                  placeholder="Ex: Toxina Botulínica, Corte Fade, Mechas..."
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-slate-500 bg-white"
+                />
+              </div>
+
+              {/* Categoria */}
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Categoria <span className="text-rose-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={serviceFormData.category}
+                  onChange={(e) =>
+                    setServiceFormData({ ...serviceFormData, category: e.target.value })
+                  }
+                  placeholder="Ex: Facial, Corporal, Cabelo, Barba..."
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-slate-500 bg-white"
+                />
+              </div>
+
+              {/* Duração & Preço */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">
+                    Duração (minutos) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min={5}
+                    step={5}
+                    required
+                    value={serviceFormData.durationMinutes}
+                    onChange={(e) =>
+                      setServiceFormData({
+                        ...serviceFormData,
+                        durationMinutes: Number(e.target.value),
+                      })
+                    }
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl font-mono tabular-nums bg-white"
+                  />
+                </div>
+                <div>
+                  <label className="text-xs font-semibold text-slate-700 block mb-1">
+                    Preço (R$) <span className="text-rose-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    required
+                    value={serviceFormData.price}
+                    onChange={(e) =>
+                      setServiceFormData({
+                        ...serviceFormData,
+                        price: Number(e.target.value),
+                      })
+                    }
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl font-mono tabular-nums font-bold text-slate-900 bg-white"
+                  />
+                </div>
+              </div>
+
+              {/* Comissão % */}
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Comissão do Profissional (%)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  required
+                  value={serviceFormData.commissionPercentage}
+                  onChange={(e) =>
+                    setServiceFormData({
+                      ...serviceFormData,
+                      commissionPercentage: Number(e.target.value),
+                    })
+                  }
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl font-mono tabular-nums bg-white"
+                />
+              </div>
+
+              {/* Descrição */}
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Descrição do Serviço
+                </label>
+                <textarea
+                  rows={2}
+                  value={serviceFormData.description}
+                  onChange={(e) =>
+                    setServiceFormData({ ...serviceFormData, description: e.target.value })
+                  }
+                  placeholder="Detalhes, produtos aplicados e recomendações..."
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl bg-white"
+                />
+              </div>
+
+              {/* Profissionais Habilitados */}
+              {serviceFormData.businessId && (
+                <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-2">
+                  <label className="text-xs font-bold text-slate-900 block">
+                    Profissionais Habilitados do Estabelecimento
+                  </label>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <label className="flex items-center gap-1.5 p-2 bg-white rounded-lg border border-slate-200 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="ceoServiceAssoc"
+                        checked={serviceAssociationMode === 'all'}
+                        onChange={() => setServiceAssociationMode('all')}
+                      />
+                      <span>Todos os Profissionais</span>
+                    </label>
+                    <label className="flex items-center gap-1.5 p-2 bg-white rounded-lg border border-slate-200 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="ceoServiceAssoc"
+                        checked={serviceAssociationMode === 'specific'}
+                        onChange={() => setServiceAssociationMode('specific')}
+                      />
+                      <span>Profissionais Específicos</span>
+                    </label>
+                  </div>
+
+                  {serviceAssociationMode === 'specific' && (
+                    <div className="space-y-1.5 max-h-36 overflow-y-auto pt-2">
+                      {professionals
+                        .filter((p) => p.businessId === serviceFormData.businessId)
+                        .map((pro) => {
+                          const isChecked = serviceFormData.allowedProfessionalIds.includes(pro.id);
+                          return (
+                            <label
+                              key={pro.id}
+                              className="flex items-center gap-2 p-1.5 bg-white rounded-lg border border-slate-200 text-xs cursor-pointer"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={() => {
+                                  setServiceFormData((prev) => ({
+                                    ...prev,
+                                    allowedProfessionalIds: isChecked
+                                      ? prev.allowedProfessionalIds.filter((id) => id !== pro.id)
+                                      : [...prev.allowedProfessionalIds, pro.id],
+                                  }));
+                                }}
+                              />
+                              <span className="font-semibold text-slate-800">{pro.name}</span>
+                              <span className="text-[10px] text-slate-400">
+                                ({pro.specialties[0] || 'Profissional'})
+                              </span>
+                            </label>
+                          );
+                        })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsServiceModalOpen(false)}
+                  className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-xl text-xs font-semibold cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold cursor-pointer"
+                >
+                  Salvar Serviço
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CEO: CONFIRMAÇÃO DE EXCLUSÃO DE SERVIÇO */}
+      {serviceToDeleteItem && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md p-6">
+            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mb-4">
+              <AlertTriangle className="w-6 h-6" />
+            </div>
+
+            <h3 className="text-base font-bold text-slate-900 mb-1">
+              Excluir Serviço: {serviceToDeleteItem.name}?
+            </h3>
+            <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+              Tem certeza que deseja excluir o serviço{' '}
+              <strong className="text-slate-800 font-bold">"{serviceToDeleteItem.name}"</strong>? Esta ação
+              removerá o serviço do banco de dados do estabelecimento.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setServiceToDeleteItem(null)}
+                className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-xl text-xs font-semibold cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  deleteService(serviceToDeleteItem.id);
+                  setServiceToDeleteItem(null);
+                }}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold cursor-pointer"
+              >
+                Confirmar Exclusão
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

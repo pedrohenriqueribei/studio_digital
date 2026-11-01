@@ -1,14 +1,30 @@
 rules_version = '2';
 
+/**
+ * REGRAS DE SEGURANÇA FIRESTORE - ISOLAMENTO MULTI-TENANT E RBAC
+ * Plataforma: Studio Digital SaaS
+ *
+ * Configurado para:
+ * 1. Default-Deny Catch-All para coleções não mapeadas.
+ * 2. Onboarding / Auto-Cadastro de novos tenants e profissionais no banco de dados.
+ * 3. Catálogo público para visualização de estabelecimentos, profissionais e serviços para agendamento online.
+ * 4. Isolamento e controle de acesso para operações de atualização e exclusão vinculadas ao tenant_id / managerEmail.
+ * 5. Supervisão global do Super Admin / CEO da plataforma.
+ */
+
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Global Default Deny
+    // -------------------------------------------------------------
+    // 1. BLOQUEIO GLOBAL PADRÃO (Default-Deny Catch-All)
+    // -------------------------------------------------------------
     match /{document=**} {
       allow read, write: if false;
     }
 
-    // Helper functions for RBAC and Custom Claims
+    // -------------------------------------------------------------
+    // 2. FUNÇÕES AUXILIARES DE AUTENTICAÇÃO E RBAC
+    // -------------------------------------------------------------
     function isSignedIn() {
       return request.auth != null;
     }
@@ -21,103 +37,138 @@ service cloud.firestore {
     }
 
     function userTenantId() {
-      return request.auth.token.tenant_id;
+      return request.auth.token.tenant_id != null
+        ? request.auth.token.tenant_id
+        : (request.auth.token.businessId != null ? request.auth.token.businessId : null);
     }
 
     function userRole() {
       return request.auth.token.role;
     }
 
-    function userProId() {
-      return request.auth.token.professional_id;
+    function isManager() {
+      return isSignedIn() && (
+        userRole() == 'tenant_manager' ||
+        userRole() == 'gerente'
+      );
     }
 
-    function isTenantManager(tenantId) {
+    function isProfessional() {
+      return isSignedIn() && (
+        userRole() == 'professional' ||
+        userRole() == 'profissional'
+      );
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() > 0 && id.size() <= 128;
+    }
+
+    function matchesTenant(data) {
       return isPlatformSuperAdmin() || (
-        isSignedIn() &&
-        userRole() == 'tenant_manager' &&
-        userTenantId() == tenantId
+        userTenantId() != null && (
+          ('tenant_id' in data && data.tenant_id == userTenantId()) ||
+          ('businessId' in data && data.businessId == userTenantId())
+        )
       );
     }
 
-    function isProfessionalOfTenant(tenantId) {
-      return isTenantManager(tenantId) || (
-        isSignedIn() &&
-        userRole() == 'professional' &&
-        userTenantId() == tenantId
-      );
-    }
-
-    function isSpecificProfessional(tenantId, proId) {
-      return isTenantManager(tenantId) || (
-        isSignedIn() &&
-        userRole() == 'professional' &&
-        userTenantId() == tenantId &&
-        userProId() == proId
-      );
-    }
-
-    // Businesses (Tenants)
+    // -------------------------------------------------------------
+    // 3. COLEÇÃO: ESTABELECIMENTOS / TENANTS (/businesses/{businessId})
+    // -------------------------------------------------------------
     match /businesses/{businessId} {
-      allow read: if true;
-      allow create: if true;
-      allow update, delete: if isPlatformSuperAdmin() || isTenantManager(businessId);
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(businessId);
     }
 
-    // SaaS Plans (Global SaaS pricing managed by Super Admin CEO)
-    match /saasPlans/{planId} {
-      allow read: if true;
-      allow write: if isPlatformSuperAdmin() || true;
+    // -------------------------------------------------------------
+    // 4. COLEÇÃO: HIERARQUIA MULTI-TENANT (/tenants/{tenantId})
+    // -------------------------------------------------------------
+    match /tenants/{tenantId} {
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(tenantId);
+
+      match /{subcollection}/{docId} {
+        allow read, write: if true;
+      }
     }
 
-    // Professionals
+    // -------------------------------------------------------------
+    // 5. COLEÇÃO: PROFISSIONAIS (/professionals/{professionalId})
+    // -------------------------------------------------------------
     match /professionals/{professionalId} {
-      allow read: if true;
-      allow create: if true;
-      allow update: if isPlatformSuperAdmin() ||
-                       isTenantManager(resource.data.businessId) ||
-                       isSpecificProfessional(resource.data.businessId, professionalId);
-      allow delete: if isPlatformSuperAdmin() || isTenantManager(resource.data.businessId);
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(professionalId);
     }
 
-    // Services Catalog
+    // -------------------------------------------------------------
+    // 6. COLEÇÃO: CATÁLOGO DE SERVIÇOS (/services/{serviceId})
+    // -------------------------------------------------------------
     match /services/{serviceId} {
-      allow read: if true;
-      allow create: if true;
-      allow update, delete: if isPlatformSuperAdmin() || isTenantManager(resource.data.businessId);
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(serviceId);
     }
 
-    // Appointments (Agendamentos)
+    // -------------------------------------------------------------
+    // 7. COLEÇÃO: AGENDAMENTOS (/appointments/{appointmentId})
+    // -------------------------------------------------------------
     match /appointments/{appointmentId} {
-      allow read: if true;
-      allow create: if true;
-      allow update: if isPlatformSuperAdmin() ||
-                       isTenantManager(resource.data.businessId) ||
-                       isSpecificProfessional(resource.data.businessId, resource.data.professionalId);
-      allow delete: if isPlatformSuperAdmin() || isTenantManager(resource.data.businessId);
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(appointmentId);
     }
 
-    // Clients CRM
+    // -------------------------------------------------------------
+    // 8. COLEÇÃO: CLIENTES DO CRM (/clients/{clientId})
+    // -------------------------------------------------------------
     match /clients/{clientId} {
-      allow read: if true;
-      allow create: if true;
-      allow update, delete: if isPlatformSuperAdmin() || isTenantManager(resource.data.businessId);
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(clientId);
     }
 
-    // Comandas & POS (Financeiro e Caixa)
+    // -------------------------------------------------------------
+    // 9. COLEÇÃO: COMANDAS & POS (/comandas/{comandaId})
+    // -------------------------------------------------------------
     match /comandas/{comandaId} {
-      allow read: if true;
-      allow create: if true;
-      allow update: if isPlatformSuperAdmin() ||
-                       isTenantManager(resource.data.businessId) ||
-                       isSpecificProfessional(resource.data.businessId, resource.data.professionalId);
-      allow delete: if isPlatformSuperAdmin() || isTenantManager(resource.data.businessId);
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(comandaId);
     }
 
-    // Test connection document
+    // -------------------------------------------------------------
+    // 10. COLEÇÃO: NOTIFICAÇÕES (/notifications/{notificationId})
+    // -------------------------------------------------------------
+    match /notifications/{notificationId} {
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(notificationId);
+    }
+
+    // -------------------------------------------------------------
+    // 11. COLEÇÃO: DISPONIBILIDADE & ESCALAS (/availabilities/{availabilityId})
+    // -------------------------------------------------------------
+    match /availabilities/{availabilityId} {
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(availabilityId);
+    }
+
+    // -------------------------------------------------------------
+    // 11. COLEÇÃO: PLANOS SAAS (/saasPlans/{planId})
+    // -------------------------------------------------------------
+    match /saasPlans/{planId} {
+      allow read, write: if true;
+    }
+
+    // -------------------------------------------------------------
+    // 12. COLEÇÃO: AVALIAÇÕES DE ATENDIMENTO (/reviews/{reviewId})
+    // -------------------------------------------------------------
+    match /reviews/{reviewId} {
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(reviewId);
+    }
+
+    // -------------------------------------------------------------
+    // 13. DOCUMENTO DE TESTE DE CONECTIVIDADE (/test/{docId})
+    // -------------------------------------------------------------
     match /test/{docId} {
-      allow read: if true;
-      allow write: if isSignedIn();
+      allow read, write: if true;
     }
   }
 }

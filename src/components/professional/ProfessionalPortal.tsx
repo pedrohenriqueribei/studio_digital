@@ -20,11 +20,17 @@ import {
   Layers,
   Building2,
   CalendarDays,
+  Star,
+  Users,
+  AlertTriangle,
+  UserCheck,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Appointment, AppointmentStatus } from '../../types';
 import { getTodayDateString } from '../../utils/date';
 import { slugify } from '../../utils/slugify';
+import { ClientsManager } from '../clients/ClientsManager';
+import { getClientTagConfig } from '../../utils/clientTags';
 
 export const ProfessionalPortal: React.FC = () => {
   const {
@@ -36,7 +42,25 @@ export const ProfessionalPortal: React.FC = () => {
     navigateTo,
     activeServices,
     userRole,
+    setSettingsSubTab,
+    setSelectedProfessionalForAvailabilityId,
+    setActiveTab,
+    activeClients,
+    currentPath,
   } = useApp();
+
+  const isClientesPath = currentPath === '/app/profissional/clientes';
+  const [proActiveTab, setProActiveTab] = useState<'agenda' | 'clientes'>(
+    isClientesPath ? 'clientes' : 'agenda'
+  );
+
+  React.useEffect(() => {
+    if (currentPath === '/app/profissional/clientes') {
+      setProActiveTab('clientes');
+    } else if (currentPath === '/app/profissional/agenda') {
+      setProActiveTab('agenda');
+    }
+  }, [currentPath]);
 
   const [dateFilter, setDateFilter] = useState<'today' | 'tomorrow' | 'week' | 'all'>('today');
   const [statusFilter, setStatusFilter] = useState<string>('all');
@@ -172,9 +196,20 @@ export const ProfessionalPortal: React.FC = () => {
                 {currentBusiness?.tradeName}
               </span>
             </div>
-            <h1 className="text-xl sm:text-2xl font-bold text-slate-900">
-              Olá, {currentProfessional.name}!
-            </h1>
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-xl sm:text-2xl font-bold text-slate-900">
+                Olá, {currentProfessional.name}!
+              </h1>
+              {currentProfessional.averageRating !== undefined && (
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-xs font-bold">
+                  <Star className="w-3.5 h-3.5 fill-amber-400 text-amber-400" />
+                  <span>{currentProfessional.averageRating.toFixed(1)}</span>
+                  <span className="text-[10px] text-amber-700/80 font-normal">
+                    ({currentProfessional.totalReviews || 1} {currentProfessional.totalReviews === 1 ? 'avaliação' : 'avaliações'})
+                  </span>
+                </span>
+              )}
+            </div>
             <p className="text-xs text-slate-500 mt-0.5 flex flex-wrap items-center gap-2">
               <span>{currentProfessional.specialties.join(' · ')}</span>
               <span>·</span>
@@ -208,243 +243,407 @@ export const ProfessionalPortal: React.FC = () => {
               {copiedLink ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
             </button>
           </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedProfessionalForAvailabilityId(currentProfessional.id);
+              setSettingsSubTab('disponibilidade');
+              setActiveTab('configuracoes');
+            }}
+            className="w-full py-1.5 px-2.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-900 border border-amber-300/80 rounded-lg text-[11px] font-bold transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+            title="Definir turnos, semanas e períodos de atendimento flexíveis"
+          >
+            <Clock className="w-3.5 h-3.5 text-amber-600" />
+            <span>Minhas Escalas &amp; Disponibilidade</span>
+          </button>
         </div>
       </div>
 
-      {/* KPI Cards: Commission & Performance */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs">
-          <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-            <span>Minhas Comissões (Mês)</span>
-            <DollarSign className="w-4 h-4 text-emerald-600" />
-          </div>
-          <p className="text-2xl font-extrabold text-slate-900 font-mono tabular-nums">
-            R$ {stats.myCommissions.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-          </p>
-          <div className="flex items-center gap-1 text-[11px] text-emerald-600 font-semibold mt-1">
-            <span>{stats.rate}% de comissão cadastrada</span>
-          </div>
-        </div>
+      {/* Sub-Navigation Switcher: Minha Agenda vs Meus Clientes */}
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-3">
+        <button
+          onClick={() => {
+            setProActiveTab('agenda');
+            navigateTo('/app/profissional/agenda');
+          }}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            proActiveTab === 'agenda'
+              ? 'bg-slate-900 text-white shadow-xs'
+              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+          }`}
+        >
+          <CalendarIcon className="w-4 h-4" />
+          <span>Minha Agenda de Atendimentos</span>
+          {myAppointments.length > 0 && (
+            <span
+              className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+                proActiveTab === 'agenda' ? 'bg-slate-800 text-amber-300' : 'bg-slate-100 text-slate-700'
+              }`}
+            >
+              {myAppointments.length}
+            </span>
+          )}
+        </button>
 
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs">
-          <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-            <span>Atendimentos Concluídos</span>
-            <CheckCircle2 className="w-4 h-4 text-indigo-600" />
-          </div>
-          <p className="text-2xl font-extrabold text-slate-900 font-mono tabular-nums">
-            {stats.completed}
-          </p>
-          <span className="text-[11px] text-slate-500">
-            De {stats.totalAppointments} agendamentos totais
+        <button
+          onClick={() => {
+            setProActiveTab('clientes');
+            navigateTo('/app/profissional/clientes');
+          }}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+            proActiveTab === 'clientes'
+              ? 'bg-slate-900 text-white shadow-xs'
+              : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+          }`}
+        >
+          <UserCheck className="w-4 h-4 text-emerald-500" />
+          <span>Gestão &amp; Ficha de Clientes (CRM)</span>
+          <span
+            className={`px-1.5 py-0.2 rounded-full text-[10px] font-mono ${
+              proActiveTab === 'clientes' ? 'bg-slate-800 text-amber-300' : 'bg-slate-100 text-slate-700'
+            }`}
+          >
+            {activeClients.length}
           </span>
-        </div>
-
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs">
-          <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-            <span>Faturamento Gerado</span>
-            <TrendingUp className="w-4 h-4 text-blue-600" />
-          </div>
-          <p className="text-2xl font-extrabold text-slate-900 font-mono tabular-nums">
-            R$ {stats.grossRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-          </p>
-          <span className="text-[11px] text-slate-500">Valor bruto dos serviços</span>
-        </div>
-
-        <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs">
-          <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
-            <span>Agendamentos para Hoje</span>
-            <CalendarDays className="w-4 h-4 text-amber-500" />
-          </div>
-          <p className="text-2xl font-extrabold text-slate-900 font-mono tabular-nums">
-            {activeAppointments.filter((a) => a.professionalId === currentProfessional.id && a.date === todayStr).length}
-          </p>
-          <span className="text-[11px] text-slate-500">Na sua agenda pessoal</span>
-        </div>
+        </button>
       </div>
 
-      {/* Main Agenda Section for this Specialist */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
-        {/* Toolbar & Filters */}
-        <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-50/50">
-          <div>
-            <h2 className="text-base font-bold text-slate-900">
-              Minha Agenda de Atendimentos
-            </h2>
-            <p className="text-xs text-slate-500">
-              Gerencie seus clientes e atualize o status conforme for atendendo
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Date filter pills */}
-            <div className="flex items-center p-1 bg-slate-100 rounded-lg text-xs font-semibold">
-              <button
-                onClick={() => setDateFilter('today')}
-                className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
-                  dateFilter === 'today' ? 'bg-white text-slate-900 shadow-2xs font-bold' : 'text-slate-600'
-                }`}
-              >
-                Hoje
-              </button>
-              <button
-                onClick={() => setDateFilter('tomorrow')}
-                className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
-                  dateFilter === 'tomorrow' ? 'bg-white text-slate-900 shadow-2xs font-bold' : 'text-slate-600'
-                }`}
-              >
-                Amanhã
-              </button>
-              <button
-                onClick={() => setDateFilter('all')}
-                className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
-                  dateFilter === 'all' ? 'bg-white text-slate-900 shadow-2xs font-bold' : 'text-slate-600'
-                }`}
-              >
-                Todos
-              </button>
+      {/* RENDER VIEW ACCORDING TO PRO ACTIVETAB */}
+      {proActiveTab === 'clientes' ? (
+        <ClientsManager isProfessionalView={true} />
+      ) : (
+        <>
+          {/* KPI Cards: Commission & Performance */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                <span>Minhas Comissões (Mês)</span>
+                <DollarSign className="w-4 h-4 text-emerald-600" />
+              </div>
+              <p className="text-2xl font-extrabold text-slate-900 font-mono tabular-nums">
+                R$ {stats.myCommissions.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </p>
+              <div className="flex items-center gap-1 text-[11px] text-emerald-600 font-semibold mt-1">
+                <span>{stats.rate}% de comissão cadastrada</span>
+              </div>
             </div>
 
-            {/* Status filter dropdown */}
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-700 focus:outline-none"
-            >
-              <option value="all">Todos os Status</option>
-              <option value="agendado">Agendados</option>
-              <option value="confirmado">Confirmados</option>
-              <option value="em_atendimento">Em Atendimento</option>
-              <option value="concluido">Concluídos</option>
-              <option value="cancelado">Cancelados</option>
-            </select>
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                <span>Atendimentos Concluídos</span>
+                <CheckCircle2 className="w-4 h-4 text-indigo-600" />
+              </div>
+              <p className="text-2xl font-extrabold text-slate-900 font-mono tabular-nums">
+                {stats.completed}
+              </p>
+              <span className="text-[11px] text-slate-500">
+                De {stats.totalAppointments} agendamentos totais
+              </span>
+            </div>
 
-            <button
-              onClick={() => openNewAppointmentModal({ professionalId: currentProfessional.id })}
-              className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold shadow-xs transition-colors cursor-pointer"
-            >
-              + Novo Encaixe
-            </button>
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                <span>Faturamento Gerado</span>
+                <TrendingUp className="w-4 h-4 text-blue-600" />
+              </div>
+              <p className="text-2xl font-extrabold text-slate-900 font-mono tabular-nums">
+                R$ {stats.grossRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+              </p>
+              <span className="text-[11px] text-slate-500">Valor bruto dos serviços</span>
+            </div>
+
+            <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs">
+              <div className="flex items-center justify-between text-xs text-slate-400 mb-1">
+                <span>Agendamentos para Hoje</span>
+                <CalendarDays className="w-4 h-4 text-amber-500" />
+              </div>
+              <p className="text-2xl font-extrabold text-slate-900 font-mono tabular-nums">
+                {activeAppointments.filter((a) => a.professionalId === currentProfessional.id && a.date === todayStr).length}
+              </p>
+              <span className="text-[11px] text-slate-500">Na sua agenda pessoal</span>
+            </div>
           </div>
-        </div>
 
-        {/* Appointment Cards / Table */}
-        <div className="divide-y divide-slate-100">
-          {myAppointments.map((app) => {
-            const badge = getStatusBadge(app.status);
-            const BadgeIcon = badge.icon;
+          {/* Main Agenda Section for this Specialist */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+            {/* Toolbar & Filters */}
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-slate-50/50">
+              <div>
+                <h2 className="text-base font-bold text-slate-900">
+                  Minha Agenda de Atendimentos
+                </h2>
+                <p className="text-xs text-slate-500">
+                  Gerencie seus clientes e atualize o status conforme for atendendo
+                </p>
+              </div>
 
-            return (
-              <div
-                key={app.id}
-                className="p-4 sm:p-5 hover:bg-slate-50/70 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-              >
-                <div className="flex items-start gap-3.5 min-w-0">
-                  {/* Time Badge */}
-                  <div className="p-2.5 rounded-xl bg-slate-100 text-slate-800 font-mono text-center shrink-0 min-w-[70px]">
-                    <span className="text-xs font-bold block">{app.startTime}</span>
-                    <span className="text-[10px] text-slate-500 block">até {app.endTime}</span>
-                  </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {/* Date filter pills */}
+                <div className="flex items-center p-1 bg-slate-100 rounded-lg text-xs font-semibold">
+                  <button
+                    onClick={() => setDateFilter('today')}
+                    className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
+                      dateFilter === 'today' ? 'bg-white text-slate-900 shadow-2xs font-bold' : 'text-slate-600'
+                    }`}
+                  >
+                    Hoje
+                  </button>
+                  <button
+                    onClick={() => setDateFilter('tomorrow')}
+                    className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
+                      dateFilter === 'tomorrow' ? 'bg-white text-slate-900 shadow-2xs font-bold' : 'text-slate-600'
+                    }`}
+                  >
+                    Amanhã
+                  </button>
+                  <button
+                    onClick={() => setDateFilter('all')}
+                    className={`px-3 py-1 rounded-md transition-all cursor-pointer ${
+                      dateFilter === 'all' ? 'bg-white text-slate-900 shadow-2xs font-bold' : 'text-slate-600'
+                    }`}
+                  >
+                    Todos
+                  </button>
+                </div>
 
-                  <div className="min-w-0 space-y-1">
-                    <div className="flex items-center gap-2">
-                      <span className="font-bold text-slate-900 text-sm truncate">
-                        {app.clientName}
-                      </span>
-                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[10px] font-bold ${badge.bg}`}>
-                        <BadgeIcon className="w-3 h-3" />
-                        <span>{badge.label}</span>
-                      </span>
+                {/* Status filter dropdown */}
+                <select
+                  value={statusFilter}
+                  onChange={(e) => setStatusFilter(e.target.value)}
+                  className="px-3 py-1.5 text-xs border border-slate-200 rounded-lg bg-white text-slate-700 focus:outline-none cursor-pointer"
+                >
+                  <option value="all">Todos os Status</option>
+                  <option value="agendado">Agendados</option>
+                  <option value="confirmado">Confirmados</option>
+                  <option value="em_atendimento">Em Atendimento</option>
+                  <option value="concluido">Concluídos</option>
+                  <option value="cancelado">Cancelados</option>
+                </select>
+
+                <button
+                  onClick={() => {
+                    setProActiveTab('clientes');
+                    navigateTo('/app/profissional/clientes');
+                  }}
+                  className="px-3 py-1.5 bg-white hover:bg-slate-50 text-slate-800 border border-slate-200 rounded-lg text-xs font-semibold shadow-2xs transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <Users className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Base de Clientes</span>
+                </button>
+
+                <button
+                  onClick={() => openNewAppointmentModal({ professionalId: currentProfessional.id })}
+                  className="px-3.5 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold shadow-xs transition-colors cursor-pointer"
+                >
+                  + Novo Encaixe
+                </button>
+              </div>
+            </div>
+
+            {/* Appointment Cards / Table */}
+            <div className="divide-y divide-slate-100">
+              {myAppointments.map((app) => {
+                const badge = getStatusBadge(app.status);
+                const BadgeIcon = badge.icon;
+                const matchedClient = activeClients.find(
+                  (c) =>
+                    c.id === app.clientId ||
+                    (app.clientPhone && c.phone.replace(/\D/g, '') === app.clientPhone.replace(/\D/g, '')) ||
+                    c.name.toLowerCase() === app.clientName.toLowerCase()
+                );
+                const hasAllergies = matchedClient?.preferences?.allergies && matchedClient.preferences.allergies.length > 0;
+
+                return (
+                  <div
+                    key={app.id}
+                    className={`p-4 sm:p-5 hover:bg-slate-50/70 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-4 ${
+                      hasAllergies ? 'bg-rose-50/20' : ''
+                    }`}
+                  >
+                    <div className="flex items-start gap-3.5 min-w-0">
+                      {/* Time Badge */}
+                      <div className="p-2.5 rounded-xl bg-slate-100 text-slate-800 font-mono text-center shrink-0 min-w-[70px]">
+                        <span className="text-xs font-bold block">{app.startTime}</span>
+                        <span className="text-[10px] text-slate-500 block">até {app.endTime}</span>
+                      </div>
+
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-bold text-slate-900 text-sm truncate">
+                            {app.clientName}
+                          </span>
+                          <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md border text-[10px] font-bold ${badge.bg}`}>
+                            <BadgeIcon className="w-3 h-3" />
+                            <span>{badge.label}</span>
+                          </span>
+
+                          {/* Client Segmentation Tags */}
+                          {matchedClient?.tags && matchedClient.tags.length > 0 && (
+                            <div className="inline-flex items-center gap-1 flex-wrap">
+                              {matchedClient.tags.map((t) => {
+                                const config = getClientTagConfig(t);
+                                const TagIcon = config.icon;
+                                return (
+                                  <span
+                                    key={t}
+                                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] border shadow-2xs font-bold ${config.badgeClass}`}
+                                    title={config.description}
+                                  >
+                                    <TagIcon className="w-2.5 h-2.5" />
+                                    <span>{config.label}</span>
+                                  </span>
+                                );
+                              })}
+                            </div>
+                          )}
+
+                          {/* Allergy Warning Badge directly in Agenda */}
+                          {hasAllergies && (
+                            <span
+                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-rose-100 text-rose-800 border border-rose-300 text-[10px] font-bold"
+                              title={`Alergias registradas: ${matchedClient!.preferences!.allergies!.join(', ')}`}
+                            >
+                              <AlertTriangle className="w-3 h-3 text-rose-600 fill-rose-600" />
+                              <span>⚠️ Alergia: {matchedClient!.preferences!.allergies!.join(', ')}</span>
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap items-center gap-2 text-xs text-slate-600">
+                          <span className="flex items-center gap-1 font-medium text-indigo-700">
+                            <Scissors className="w-3.5 h-3.5 text-indigo-500" />
+                            <span>{app.serviceName}</span>
+                          </span>
+                          <span>·</span>
+                          <span className="text-slate-500">{app.date}</span>
+                          {app.clientPhone && (
+                            <>
+                              <span>·</span>
+                              <span className="text-slate-500 flex items-center gap-1">
+                                <Phone className="w-3 h-3 text-slate-400" />
+                                <span>{app.clientPhone}</span>
+                              </span>
+                            </>
+                          )}
+                        </div>
+
+                        {/* Preferred Cut & Colors Tags if registered */}
+                        {matchedClient?.preferences && (
+                          <div className="flex items-center gap-2 flex-wrap pt-0.5 text-[10px]">
+                            {matchedClient.preferences.cutTypes && matchedClient.preferences.cutTypes.length > 0 && (
+                              <span className="px-1.5 py-0.5 bg-slate-100 text-slate-700 rounded font-semibold">
+                                Corte: {matchedClient.preferences.cutTypes.slice(0, 2).join(', ')}
+                              </span>
+                            )}
+                            {matchedClient.preferences.preferredColors && matchedClient.preferences.preferredColors.length > 0 && (
+                              <span className="px-1.5 py-0.5 bg-purple-50 text-purple-700 border border-purple-200 rounded font-semibold">
+                                Cor: {matchedClient.preferences.preferredColors.slice(0, 2).join(', ')}
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                        {app.rating && (
+                          <div className="flex items-center gap-1.5 pt-1 text-[11px] text-amber-700">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200/80 font-bold">
+                              <Star className="w-3 h-3 fill-amber-500 text-amber-500" />
+                              <span>{app.rating}.0</span>
+                            </span>
+                            {app.reviewComment && (
+                              <span className="text-slate-600 italic truncate max-w-xs">
+                                — "{app.reviewComment}"
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-3 text-xs text-slate-600">
-                      <span className="flex items-center gap-1 font-medium text-indigo-700">
-                        <Scissors className="w-3.5 h-3.5 text-indigo-500" />
-                        <span>{app.serviceName}</span>
-                      </span>
-                      <span>·</span>
-                      <span className="text-slate-500">{app.date}</span>
-                      {app.clientPhone && (
-                        <>
-                          <span>·</span>
-                          <span className="text-slate-500 flex items-center gap-1">
-                            <Phone className="w-3 h-3 text-slate-400" />
-                            <span>{app.clientPhone}</span>
-                          </span>
-                        </>
+                    {/* Status action buttons */}
+                    <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
+                      <div className="text-right mr-2 hidden sm:block">
+                        <span className="text-xs font-bold text-slate-900 font-mono block">
+                          R$ {app.price.toFixed(2)}
+                        </span>
+                        <span className="text-[10px] text-emerald-600 font-medium">
+                          Sua comissão: R$ {((app.price * (currentProfessional.commissionPercentage || 50)) / 100).toFixed(2)}
+                        </span>
+                      </div>
+
+                      {/* Quick Client CRM Link */}
+                      <button
+                        onClick={() => {
+                          setProActiveTab('clientes');
+                          navigateTo('/app/profissional/clientes');
+                        }}
+                        className="px-2.5 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                        title="Ver ficha completa, notas e preferências deste cliente"
+                      >
+                        <UserCheck className="w-3.5 h-3.5 text-indigo-600" />
+                        <span className="hidden md:inline">Ficha do Cliente</span>
+                      </button>
+
+                      {app.status === 'agendado' && (
+                        <button
+                          onClick={() => updateAppointmentStatus(app.id, 'confirmado')}
+                          className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                        >
+                          Confirmar
+                        </button>
+                      )}
+
+                      {app.status === 'confirmado' && (
+                        <button
+                          onClick={() => updateAppointmentStatus(app.id, 'em_atendimento')}
+                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-colors shadow-xs cursor-pointer flex items-center gap-1"
+                        >
+                          <PlayCircle className="w-3.5 h-3.5" />
+                          <span>Iniciar Atendimento</span>
+                        </button>
+                      )}
+
+                      {app.status === 'em_atendimento' && (
+                        <button
+                          onClick={() => updateAppointmentStatus(app.id, 'concluido')}
+                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-colors shadow-xs cursor-pointer flex items-center gap-1"
+                        >
+                          <Check className="w-3.5 h-3.5" />
+                          <span>Concluir</span>
+                        </button>
+                      )}
+
+                      {app.status !== 'cancelado' && app.status !== 'concluido' && (
+                        <button
+                          onClick={() => {
+                            if (confirm('Deseja marcar este agendamento como cancelado?')) {
+                              updateAppointmentStatus(app.id, 'cancelado');
+                            }
+                          }}
+                          className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                          title="Cancelar agendamento"
+                        >
+                          ✕
+                        </button>
                       )}
                     </div>
                   </div>
+                );
+              })}
+
+              {myAppointments.length === 0 && (
+                <div className="p-12 text-center text-xs text-slate-400">
+                  <CalendarIcon className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+                  <p className="font-semibold text-slate-700">Nenhum agendamento encontrado para este filtro.</p>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    Compartilhe o link do seu perfil público ({publicBookingUrl}) para receber agendamentos online!
+                  </p>
                 </div>
-
-                {/* Status action buttons */}
-                <div className="flex items-center gap-2 self-end sm:self-center shrink-0">
-                  <div className="text-right mr-2 hidden sm:block">
-                    <span className="text-xs font-bold text-slate-900 font-mono block">
-                      R$ {app.price.toFixed(2)}
-                    </span>
-                    <span className="text-[10px] text-emerald-600 font-medium">
-                      Sua comissão: R$ {((app.price * (currentProfessional.commissionPercentage || 50)) / 100).toFixed(2)}
-                    </span>
-                  </div>
-
-                  {app.status === 'agendado' && (
-                    <button
-                      onClick={() => updateAppointmentStatus(app.id, 'confirmado')}
-                      className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-lg text-xs font-bold transition-colors cursor-pointer"
-                    >
-                      Confirmar
-                    </button>
-                  )}
-
-                  {app.status === 'confirmado' && (
-                    <button
-                      onClick={() => updateAppointmentStatus(app.id, 'em_atendimento')}
-                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-colors shadow-xs cursor-pointer flex items-center gap-1"
-                    >
-                      <PlayCircle className="w-3.5 h-3.5" />
-                      <span>Iniciar Atendimento</span>
-                    </button>
-                  )}
-
-                  {app.status === 'em_atendimento' && (
-                    <button
-                      onClick={() => updateAppointmentStatus(app.id, 'concluido')}
-                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-colors shadow-xs cursor-pointer flex items-center gap-1"
-                    >
-                      <Check className="w-3.5 h-3.5" />
-                      <span>Concluir</span>
-                    </button>
-                  )}
-
-                  {app.status !== 'cancelado' && app.status !== 'concluido' && (
-                    <button
-                      onClick={() => {
-                        if (confirm('Deseja marcar este agendamento como cancelado?')) {
-                          updateAppointmentStatus(app.id, 'cancelado');
-                        }
-                      }}
-                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
-                      title="Cancelar agendamento"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-
-          {myAppointments.length === 0 && (
-            <div className="p-12 text-center text-xs text-slate-400">
-              <CalendarIcon className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-              <p className="font-semibold text-slate-700">Nenhum agendamento encontrado para este filtro.</p>
-              <p className="text-[11px] text-slate-400 mt-0.5">
-                Compartilhe o link do seu perfil público ({publicBookingUrl}) para receber agendamentos online!
-              </p>
+              )}
             </div>
-          )}
-        </div>
-      </div>
+          </div>
+        </>
+      )}
     </div>
   );
 };

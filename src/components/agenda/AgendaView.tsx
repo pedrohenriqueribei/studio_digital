@@ -601,19 +601,50 @@ export const AgendaView: React.FC = () => {
                               );
                             })
                           ) : (
-                            <button
-                              onClick={() => {
-                                openNewAppointmentModal({
-                                  date: selectedDate,
-                                  startTime: time,
-                                  professionalId: pro.id,
-                                });
-                              }}
-                              className="w-full h-full min-h-[56px] flex items-center justify-center text-slate-300 hover:text-slate-600 hover:bg-slate-100/70 rounded-md transition-colors cursor-pointer opacity-0 group-hover:opacity-100"
-                              title={`Agendar com ${pro.name} às ${time}`}
-                            >
-                              <Plus className="w-4 h-4" />
-                            </button>
+                            (() => {
+                              const ongoingApp = filteredAppointments.find((app) => {
+                                if (app.professionalId !== pro.id || app.status === 'cancelado') return false;
+                                const [sH, sM] = app.startTime.split(':').map(Number);
+                                const [eH, eM] = app.endTime.split(':').map(Number);
+                                const [tH, tM] = time.split(':').map(Number);
+                                const sTotal = (sH || 0) * 60 + (sM || 0);
+                                const eTotal = (eH || 0) * 60 + (eM || 0);
+                                const tTotal = (tH || 0) * 60 + (tM || 0);
+                                return tTotal > sTotal && tTotal < eTotal;
+                              });
+
+                              if (ongoingApp) {
+                                return (
+                                  <div
+                                    onClick={() => setSelectedAppointment(ongoingApp)}
+                                    className="h-full min-h-[56px] p-2 rounded-md bg-slate-50 border border-dashed border-slate-200/90 flex items-center justify-between text-[11px] text-slate-500 cursor-pointer hover:bg-slate-100 transition-colors"
+                                    title={`Em atendimento com ${ongoingApp.clientName} (início às ${ongoingApp.startTime}, término às ${ongoingApp.endTime})`}
+                                  >
+                                    <div className="flex items-center gap-1.5 truncate">
+                                      <div className="w-1.5 h-1.5 rounded-full bg-slate-400 shrink-0" />
+                                      <span className="truncate text-slate-600 font-medium">Ocupado: {ongoingApp.clientName}</span>
+                                    </div>
+                                    <span className="font-mono text-[10px] text-slate-400 shrink-0 ml-1">até {ongoingApp.endTime}</span>
+                                  </div>
+                                );
+                              }
+
+                              return (
+                                <button
+                                  onClick={() => {
+                                    openNewAppointmentModal({
+                                      date: selectedDate,
+                                      startTime: time,
+                                      professionalId: pro.id,
+                                    });
+                                  }}
+                                  className="w-full h-full min-h-[56px] flex items-center justify-center text-slate-300 hover:text-slate-600 hover:bg-slate-100/70 rounded-md transition-colors cursor-pointer opacity-0 group-hover:opacity-100"
+                                  title={`Agendar com ${pro.name} às ${time}`}
+                                >
+                                  <Plus className="w-4 h-4" />
+                                </button>
+                              );
+                            })()
                           )}
                         </div>
                       );

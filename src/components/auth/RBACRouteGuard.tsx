@@ -11,12 +11,14 @@ export const RBACRouteGuard: React.FC<RBACRouteGuardProps> = ({ children }) => {
   const {
     currentPath,
     navigateTo,
+    isAuthenticated,
     isSuperAdminAuthenticated,
     userRole,
+    currentRole,
     activeClaims,
     currentBusiness,
     currentProfessional,
-    logoutSuperAdmin,
+    logoutAll,
   } = useApp();
 
   // If path is login page
@@ -25,25 +27,100 @@ export const RBACRouteGuard: React.FC<RBACRouteGuardProps> = ({ children }) => {
   }
 
   // PUBLIC ROUTES: Allow without authentication
-  if (currentPath === '/nossos-planos' || currentPath.startsWith('/p/')) {
+  if (
+    currentPath === '/nossos-planos' ||
+    currentPath.startsWith('/p/') ||
+    currentPath === '/cadastro' ||
+    currentPath === '/cadastro-cliente'
+  ) {
     return <>{children}</>;
   }
 
-  // 1. ADMIN ROUTES (/admin/*): Strictly restricted to Super Admin (CEO Pedro)
+  const isClientUser =
+    userRole === 'client' ||
+    activeClaims?.role === 'client' ||
+    currentRole === 'client';
+
+  // If a client attempts to access administrative, manager, or professional routes:
+  if (
+    isClientUser &&
+    (currentPath.startsWith('/admin') ||
+      currentPath.startsWith('/app/gerente') ||
+      currentPath.startsWith('/app/profissional') ||
+      currentPath.startsWith('/dashboard'))
+  ) {
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between p-6">
+        <div className="max-w-md w-full mx-auto my-auto bg-slate-900 border border-amber-500/30 rounded-3xl p-8 shadow-2xl space-y-5 text-center">
+          <div className="w-16 h-16 rounded-2xl bg-amber-500/15 border border-amber-500/30 text-amber-400 flex items-center justify-center mx-auto">
+            <Lock className="w-8 h-8" />
+          </div>
+          <div>
+            <span className="text-xs font-mono uppercase font-bold text-amber-400 tracking-wider">
+              Erro 403 · Acesso Restrito (RBAC)
+            </span>
+            <h1 className="text-2xl font-extrabold text-white mt-1">
+              Área Administrativa
+            </h1>
+          </div>
+          <p className="text-xs text-slate-400 leading-relaxed">
+            Sua conta atual possui o perfil <strong className="text-amber-400 font-semibold">Cliente</strong>. Clientes não possuem permissão para acessar painéis de gestão, faturamento ou agendas internas de profissionais.
+          </p>
+          <div className="pt-2 space-y-2">
+            <button
+              onClick={() => navigateTo('/app/cliente')}
+              className="w-full py-2.5 bg-gradient-to-r from-amber-500 to-amber-600 hover:from-amber-400 hover:to-amber-500 text-slate-950 font-bold text-xs rounded-xl transition-all cursor-pointer shadow-lg shadow-amber-500/20"
+            >
+              Ir para Minha Área de Cliente (/app/cliente)
+            </button>
+            <button
+              onClick={() => {
+                logoutAll();
+                navigateTo('/login');
+              }}
+              className="w-full py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs rounded-xl transition-all cursor-pointer"
+            >
+              Sair e Entrar com Outra Conta
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 1. CLIENT ROUTES (/app/cliente/*): Must be authenticated
+  if (currentPath.startsWith('/app/cliente')) {
+    if (!isAuthenticated) {
+      return <UnifiedLoginPage />;
+    }
+  }
+
+  // 2. ADMIN ROUTES (/admin/*): Strictly restricted to Super Admin (CEO Pedro)
   if (currentPath.startsWith('/admin')) {
     // If not authenticated at all
-    if (!isSuperAdminAuthenticated) {
+    if (!isAuthenticated) {
       return <UnifiedLoginPage />;
     }
 
     // Role check: must be super_admin
     const isSuperAdmin =
+      isSuperAdminAuthenticated ||
       userRole === 'super_admin' ||
       activeClaims?.role === 'super_admin' ||
-      activeClaims?.email === 'pedro.projetos0770@gmail.com';
+      activeClaims?.email?.toLowerCase() === 'pedro.projetos0770@gmail.com';
 
     if (!isSuperAdmin) {
       // 403 FORBIDDEN - Custom Claim Missing!
+      const isManager =
+        userRole === 'tenant_manager' ||
+        activeClaims?.role === 'tenant_manager' ||
+        currentRole === 'gerente';
+
+      const isPro =
+        userRole === 'professional' ||
+        activeClaims?.role === 'professional' ||
+        currentRole === 'profissional';
+
       return (
         <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between p-6">
           <div className="max-w-xl w-full mx-auto my-auto bg-slate-900 border border-rose-500/30 rounded-3xl p-8 shadow-2xl space-y-6 text-center">
@@ -65,37 +142,37 @@ export const RBACRouteGuard: React.FC<RBACRouteGuardProps> = ({ children }) => {
             </p>
 
             <div className="p-4 bg-slate-950 rounded-2xl border border-slate-800 text-left text-xs space-y-1.5 font-mono">
-              <div className="text-[11px] text-slate-500 uppercase font-semibold">Suas Custom Claims Atuais:</div>
-              <div className="text-slate-300">Role: <span className="text-amber-400">{userRole}</span></div>
+              <div className="text-[11px] text-slate-500 uppercase font-semibold">Suas Permissões Atuais:</div>
+              <div className="text-slate-300">Role: <span className="text-amber-400">{userRole || currentRole}</span></div>
               {activeClaims?.tenant_id && (
                 <div className="text-slate-300">Tenant ID: <span className="text-indigo-400">{activeClaims.tenant_id}</span></div>
               )}
             </div>
 
             <div className="space-y-2 pt-2">
-              {userRole === 'tenant_manager' && (
+              {isManager && (
                 <button
                   onClick={() => navigateTo('/app/gerente/dashboard')}
                   className="w-full py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2"
                 >
                   <Building2 className="w-4 h-4" />
-                  <span>Ir para meu Painel de Gerente (/app/gerente)</span>
+                  <span>Ir para meu Painel de Gerente (/app/gerente/dashboard)</span>
                 </button>
               )}
 
-              {userRole === 'professional' && (
+              {isPro && (
                 <button
                   onClick={() => navigateTo('/app/profissional/agenda')}
                   className="w-full py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2"
                 >
                   <Users className="w-4 h-4" />
-                  <span>Ir para minha Agenda de Profissional (/app/profissional)</span>
+                  <span>Ir para minha Agenda de Profissional (/app/profissional/agenda)</span>
                 </button>
               )}
 
               <button
                 onClick={() => {
-                  logoutSuperAdmin();
+                  logoutAll();
                   navigateTo('/login');
                 }}
                 className="w-full py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs rounded-xl transition-all cursor-pointer"
@@ -113,13 +190,13 @@ export const RBACRouteGuard: React.FC<RBACRouteGuardProps> = ({ children }) => {
     }
   }
 
-  // 2. GERENTE ROUTES (/app/gerente/*)
+  // 3. GERENTE ROUTES (/app/gerente/*)
   if (currentPath.startsWith('/app/gerente')) {
-    if (!isSuperAdminAuthenticated) {
+    if (!isAuthenticated) {
       return <UnifiedLoginPage />;
     }
 
-    if (userRole === 'professional') {
+    if (userRole === 'professional' && !isSuperAdminAuthenticated && activeClaims?.role !== 'tenant_manager') {
       return (
         <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col justify-between p-6">
           <div className="max-w-md w-full mx-auto my-auto bg-slate-900 border border-slate-800 rounded-3xl p-8 shadow-2xl space-y-4 text-center">
@@ -140,16 +217,23 @@ export const RBACRouteGuard: React.FC<RBACRouteGuardProps> = ({ children }) => {
     }
   }
 
-  // 3. PROFISSIONAL ROUTES (/app/profissional/*)
+  // 4. PROFISSIONAL ROUTES (/app/profissional/*)
   if (currentPath.startsWith('/app/profissional')) {
-    if (!isSuperAdminAuthenticated) {
+    if (!isAuthenticated) {
+      return <UnifiedLoginPage />;
+    }
+  }
+
+  // 5. GENERAL DASHBOARD (/dashboard/*)
+  if (currentPath.startsWith('/dashboard')) {
+    if (!isAuthenticated) {
       return <UnifiedLoginPage />;
     }
   }
 
   // ROOT URL ('/'):
   if (currentPath === '/' || currentPath === '') {
-    if (!isSuperAdminAuthenticated) {
+    if (!isAuthenticated) {
       return <>{children}</>;
     }
   }

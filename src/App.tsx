@@ -20,7 +20,10 @@ import { ProfessionalPortal } from './components/professional/ProfessionalPortal
 import { RBACClaimsBar } from './components/layout/RBACClaimsBar';
 import { PlansLandingPage } from './components/landing/PlansLandingPage';
 import { ProfessionalProfilePage } from './components/public/ProfessionalProfilePage';
+import { ClientSignupPage } from './components/auth/ClientSignupPage';
+import { ClientPortal } from './components/client/ClientPortal';
 import { MobileBottomNav } from './components/layout/MobileBottomNav';
+import { Footer } from './components/layout/Footer';
 import { Crown, Check, ExternalLink, Sparkles, Building2 } from 'lucide-react';
 
 const MainContent: React.FC = () => {
@@ -43,10 +46,11 @@ const MainContent: React.FC = () => {
     currentPath.startsWith('/app/profissional') || (userRole === 'professional' && !isSuperAdminView);
 
   return (
-    <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden bg-slate-50/60 pb-10">
+    <div className="flex-1 flex flex-col min-w-0 h-screen overflow-hidden bg-slate-50/60">
       <Header />
 
-      <main className="flex-1 overflow-y-auto p-3 sm:p-6 lg:p-8 pb-28 md:pb-16 max-w-7xl w-full mx-auto">
+      <div className="flex-1 overflow-y-auto flex flex-col">
+        <main className="flex-1 p-3 sm:p-6 lg:p-8 pb-24 md:pb-12 max-w-7xl w-full mx-auto">
         {/* If in Platform Master Mode (Super Admin - Pedro Campos) */}
         {isSuperAdminView || currentPath === '/admin/painelmaster' || currentPath === '/admin' || currentPath === '/admin/' ? (
           <SuperAdminDashboard />
@@ -185,7 +189,10 @@ const MainContent: React.FC = () => {
         )}
       </main>
 
-      {/* Global Modals */}
+      <Footer />
+    </div>
+
+    {/* Global Modals */}
       <NewAppointmentModal />
       <NewStudioModal />
       <PlansModal />
@@ -201,11 +208,16 @@ const MainContent: React.FC = () => {
 };
 
 const RootRouter: React.FC = () => {
-  const { currentPath, isSuperAdminAuthenticated } = useApp();
+  const { currentPath, isAuthenticated, userRole } = useApp();
 
   // Route: /login -> Unified Login Page
   if (currentPath === '/login') {
     return <UnifiedLoginPage />;
+  }
+
+  // Public Route: /cadastro or /cadastro-cliente -> Client Signup Page
+  if (currentPath === '/cadastro' || currentPath === '/cadastro-cliente') {
+    return <ClientSignupPage />;
   }
 
   // Route: /nossos-planos -> Public SaaS pricing landing page
@@ -216,6 +228,15 @@ const RootRouter: React.FC = () => {
   // Route: /p/:slugOrId -> Public Professional Profile & Online Booking Page
   if (currentPath.startsWith('/p/')) {
     return <ProfessionalProfilePage />;
+  }
+
+  // Client Area: /app/cliente and /app/cliente/* -> Client Portal
+  if (currentPath === '/app/cliente' || currentPath.startsWith('/app/cliente')) {
+    return (
+      <RBACRouteGuard>
+        <ClientPortal />
+      </RBACRouteGuard>
+    );
   }
 
   // Protected Routes:
@@ -240,8 +261,15 @@ const RootRouter: React.FC = () => {
   }
 
   // Root URL ('/' or ''):
-  // If user is already authenticated, show the workspace guarded by RBAC
-  if (isSuperAdminAuthenticated) {
+  // If user is already authenticated, route based on their role
+  if (isAuthenticated) {
+    if (userRole === 'client') {
+      return (
+        <RBACRouteGuard>
+          <ClientPortal />
+        </RBACRouteGuard>
+      );
+    }
     return (
       <RBACRouteGuard>
         <div className="min-h-screen flex bg-slate-100 text-slate-900 font-sans antialiased overflow-hidden">

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
-import { X, Building2, Sparkles, Check, Crown, Mail, Lock, Key, Eye, EyeOff, User } from 'lucide-react';
+import { X, Building2, Sparkles, Check, Crown, Mail, Lock, Key, Eye, EyeOff, User, Phone } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { BusinessType } from '../../types';
+import { MaskedInput } from '../ui/MaskedInput';
 
 export const NewStudioModal: React.FC = () => {
   const { isNewStudioModalOpen, setIsNewStudioModalOpen, registerBusiness } = useApp();
@@ -22,7 +23,7 @@ export const NewStudioModal: React.FC = () => {
 
   if (!isNewStudioModalOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!name.trim() || !city.trim() || !phone.trim()) return;
 
@@ -31,7 +32,7 @@ export const NewStudioModal: React.FC = () => {
     if (type === 'barbearia') accentColor = '#b45309';
     if (type === 'salao_beleza') accentColor = '#db2777';
 
-    registerBusiness({
+    await registerBusiness({
       name: name.trim(),
       type,
       tradeName: name.trim(),
@@ -147,32 +148,23 @@ export const NewStudioModal: React.FC = () => {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-xs font-semibold text-slate-700 block mb-1">
-                Telefone / WhatsApp Comercial
-              </label>
-              <input
-                type="text"
-                required
-                placeholder="(11) 99999-8888"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-semibold text-slate-700 block mb-1">
-                CNPJ (opcional)
-              </label>
-              <input
-                type="text"
-                placeholder="00.000.000/0001-00"
-                value={cnpj}
-                onChange={(e) => setCnpj(e.target.value)}
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 font-mono"
-              />
-            </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <MaskedInput
+              maskType="phone"
+              label="Telefone / WhatsApp Comercial"
+              required
+              value={phone}
+              leftIcon={<Phone className="w-3.5 h-3.5" />}
+              onValueChange={(cleanVal) => setPhone(cleanVal)}
+              helperText="DDD + 8 ou 9 dígitos"
+            />
+            <MaskedInput
+              maskType="cnpj"
+              label="CNPJ (opcional)"
+              value={cnpj}
+              onValueChange={(cleanVal) => setCnpj(cleanVal)}
+              helperText="Formato 00.000.000/0000-00"
+            />
           </div>
 
           <div>

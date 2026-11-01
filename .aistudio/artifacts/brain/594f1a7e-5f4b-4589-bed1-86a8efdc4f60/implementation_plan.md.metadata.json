@@ -1,6 +1,6 @@
 {
-  "summary": "Plano de implementação detalhado para a criação da Página Exclusiva (Profile Público) de cada Profissional do Studio Digital na rota /p/[slug-ou-id]. Contempla identidade visual premium, informações do estabelecimento e do especialista, catálogo de serviços e fluxo completo de agendamento online interativo.",
-  "updatedAt": "2026-10-19T23:57:39.073275375Z",
-  "requestFeedback": true,
-  "userFacing": true
+  "summary":  "Plano de implementação e arquitetura completo do Sistema de Clientes (Cadastro, Autenticação, Portal Exclusivo e Controle de Acesso RBAC) integrado à plataforma Studio Digital.",
+  "updatedAt":  "2026-10-29T20:29:31.517851630Z",
+  "requestFeedback":  true,
+  "userFacing":  true
 }

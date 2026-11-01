@@ -15,9 +15,11 @@ import {
   EyeOff,
   Key,
   User,
+  Phone,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { ProfessionalAvailabilitySettings } from './ProfessionalAvailabilitySettings';
+import { MaskedInput } from '../ui/MaskedInput';
 
 export const StudioSettings: React.FC = () => {
   const {
@@ -189,17 +191,14 @@ export const StudioSettings: React.FC = () => {
               />
             </div>
 
-            <div>
-              <label className="text-xs font-semibold text-slate-700 block mb-1">
-                Telefone / WhatsApp Comercial
-              </label>
-              <input
-                type="text"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500"
-              />
-            </div>
+            <MaskedInput
+              maskType="phone"
+              label="Telefone / WhatsApp Comercial"
+              value={phone}
+              leftIcon={<Phone className="w-3.5 h-3.5" />}
+              onValueChange={(cleanVal) => setPhone(cleanVal)}
+              helperText="Formatação dinâmica com DDD (fixo ou celular)"
+            />
 
             <div>
               <label className="text-xs font-semibold text-slate-700 block mb-1">
@@ -222,18 +221,13 @@ export const StudioSettings: React.FC = () => {
               </div>
             </div>
 
-            <div>
-              <label className="text-xs font-semibold text-slate-700 block mb-1">
-                CNPJ Cadastrado
-              </label>
-              <input
-                type="text"
-                value={cnpj}
-                onChange={(e) => setCnpj(e.target.value)}
-                placeholder="00.000.000/0001-00"
-                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 font-mono"
-              />
-            </div>
+            <MaskedInput
+              maskType="cnpj"
+              label="CNPJ Cadastrado"
+              value={cnpj}
+              onValueChange={(cleanVal) => setCnpj(cleanVal)}
+              helperText="Formato 00.000.000/0000-00"
+            />
           </div>
         </div>
 

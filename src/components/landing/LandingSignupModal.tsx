@@ -14,9 +14,11 @@ import {
   Eye,
   EyeOff,
   AlertCircle,
+  Phone,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { BusinessType } from '../../types';
+import { MaskedInput } from '../ui/MaskedInput';
 
 interface LandingSignupModalProps {
   isOpen: boolean;
@@ -60,7 +62,7 @@ export const LandingSignupModal: React.FC<LandingSignupModalProps> = ({
     ? Math.round(currentPlan.priceMonthly * 0.8)
     : currentPlan.priceMonthly;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setValidationError('');
 
@@ -87,13 +89,13 @@ export const LandingSignupModal: React.FC<LandingSignupModalProps> = ({
 
     setIsSubmitting(true);
 
-    setTimeout(() => {
+    try {
       const cleanEmail = email.trim().toLowerCase();
       const cleanPassword = password.trim();
       const cleanOwnerName = ownerName.trim() || `Gestor(a) - ${name.trim()}`;
 
-      // Register the new tenant business with manager credentials
-      const newBiz = registerBusiness({
+      // Register the new tenant business with manager credentials, persisting to Firestore and Auth
+      const newBiz = await registerBusiness({
         name: name.trim(),
         tradeName: tradeName.trim() || name.trim(),
         type: selectedType,
@@ -112,27 +114,25 @@ export const LandingSignupModal: React.FC<LandingSignupModalProps> = ({
         managerPassword: cleanPassword,
       });
 
-      // Save registration hints for the login screen
-      try {
-        localStorage.setItem('recentSignupEmail', cleanEmail);
-        localStorage.setItem('recentSignupRole', 'tenant_manager');
-        localStorage.setItem('recentSignupBizName', newBiz.tradeName);
-      } catch (err) {
-        console.warn('Storage error:', err);
-      }
-
       setIsSubmitting(false);
       onClose();
 
       addNotification({
-        title: 'Teste Grátis Ativado com Sucesso!',
-        message: `Seu espaço "${newBiz.tradeName}" foi cadastrado no plano ${currentPlan.name}. Por favor, faça login com seu e-mail e senha cadastrados para acessar seu painel.`,
+        title: 'Espaço Ativado e Persistido no Firebase!',
+        message: `Seu espaço "${newBiz.tradeName}" foi cadastrado no plano ${currentPlan.name}. Redirecionando para seu painel...`,
         type: 'system',
       });
 
-      // Direct the user to the login page to authenticate with personal credentials
-      navigateTo('/login');
-    }, 500);
+      // Direct the user straight to their manager dashboard
+      navigateTo('/app/gerente/dashboard');
+    } catch (err: any) {
+      console.error('Falha no cadastro do estabelecimento:', err);
+      setIsSubmitting(false);
+      setValidationError(
+        err?.message ||
+          'Ocorreu um erro ao persistir os dados no Firebase. Por favor, tente novamente.'
+      );
+    }
   };
 
   return (
@@ -267,19 +267,15 @@ export const LandingSignupModal: React.FC<LandingSignupModalProps> = ({
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-semibold text-slate-700 mb-1">
-                WhatsApp Comercial *
-              </label>
-              <input
-                type="text"
-                required
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                placeholder="(11) 99999-8888"
-                className="w-full px-3 py-2 text-xs rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-slate-900 font-mono"
-              />
-            </div>
+            <MaskedInput
+              maskType="phone"
+              label="WhatsApp Comercial"
+              required
+              value={phone}
+              leftIcon={<Phone className="w-3.5 h-3.5" />}
+              onValueChange={(cleanVal) => setPhone(cleanVal)}
+              helperText="DDD + 8 ou 9 dígitos"
+            />
 
             <div>
               <label className="block text-xs font-semibold text-slate-700 mb-1">

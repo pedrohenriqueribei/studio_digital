@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { WeeklyPerformanceChart } from './WeeklyPerformanceChart';
+import { FinancialDashboard } from './FinancialDashboard';
 import { IndicatorSummary } from './IndicatorSummary';
 import { getTodayDateString } from '../../utils/date';
 
@@ -128,6 +129,15 @@ export const ExecutiveDashboard: React.FC = () => {
         currentBusiness={currentBusiness}
         onNavigateTab={(tab) => setActiveTab(tab)}
         onOpenNewAppointment={() => setIsNewAppointmentModalOpen(true)}
+      />
+
+      {/* Dashboard Financeiro: Gráfico de Linha do Faturamento Semanal + Gráfico de Rosca de Distribuição de Pagamentos */}
+      <FinancialDashboard
+        comandas={activeComandas}
+        appointments={activeAppointments}
+        currentRole={currentRole}
+        currentProfessional={currentProfessional}
+        tradeName={currentBusiness?.tradeName}
       />
 
       {/* Recharts Performance Chart: Volume de Atendimentos & Faturamento Semanal */}

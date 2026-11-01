@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { X, Calendar, Clock, User, Scissors, DollarSign } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { X, Calendar, Clock, User, Scissors, DollarSign, AlertTriangle, Phone } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { getTodayDateString } from '../../utils/date';
+import { checkAppointmentConflict } from '../../utils/availability';
+import { MaskedInput } from '../ui/MaskedInput';
 
 export const NewAppointmentModal: React.FC = () => {
   const {
@@ -12,6 +14,7 @@ export const NewAppointmentModal: React.FC = () => {
     activeServices,
     activeProfessionals,
     activeClients,
+    activeAppointments,
     addAppointment,
     addClient,
     currentBusiness,
@@ -29,6 +32,7 @@ export const NewAppointmentModal: React.FC = () => {
   const [date, setDate] = useState<string>(getTodayDateString);
   const [startTime, setStartTime] = useState('11:00');
   const [notes, setNotes] = useState('');
+  const [formError, setFormError] = useState<string>('');
 
   // Sync date, time, professional when modal opens or initial slot is provided
   useEffect(() => {
@@ -67,11 +71,35 @@ export const NewAppointmentModal: React.FC = () => {
   const handleClose = () => {
     setIsNewAppointmentModalOpen(false);
     setNewAppointmentInitialSlot(null);
+    setFormError('');
   };
 
-  if (!isNewAppointmentModalOpen) return null;
-
   const selectedService = activeServices.find((s) => s.id === serviceId);
+
+  // Profissionais habilitados para o serviço selecionado
+  const availableProfessionalsForService = useMemo(() => {
+    if (
+      !selectedService ||
+      !selectedService.allowedProfessionalIds ||
+      selectedService.allowedProfessionalIds.length === 0
+    ) {
+      return activeProfessionals;
+    }
+    const filtered = activeProfessionals.filter((pro) =>
+      selectedService.allowedProfessionalIds.includes(pro.id)
+    );
+    return filtered.length > 0 ? filtered : activeProfessionals;
+  }, [selectedService, activeProfessionals]);
+
+  // Se o profissional selecionado não estiver habilitado para este serviço, sincroniza com o primeiro válido
+  useEffect(() => {
+    if (isNewAppointmentModalOpen && availableProfessionalsForService.length > 0) {
+      const isCurrentAllowed = availableProfessionalsForService.some((p) => p.id === professionalId);
+      if (!isCurrentAllowed) {
+        setProfessionalId(availableProfessionalsForService[0].id);
+      }
+    }
+  }, [isNewAppointmentModalOpen, availableProfessionalsForService, professionalId]);
 
   // Compute end time based on start time + service duration
   const calculateEndTime = (start: string, durationMin: number) => {
@@ -88,11 +116,59 @@ export const NewAppointmentModal: React.FC = () => {
     selectedService?.durationMinutes || 45
   );
 
+  // Identificação do cliente selecionado ou em digitação
+  const resolvedClient = useMemo(() => {
+    if (isCreatingNewClient || !selectedClientId) {
+      return {
+        id: undefined,
+        name: newClientName.trim(),
+        phone: newClientPhone.trim(),
+      };
+    }
+    const existing = activeClients.find((c) => c.id === selectedClientId);
+    return {
+      id: existing?.id,
+      name: existing?.name || '',
+      phone: existing?.phone || '',
+      email: existing?.email || '',
+    };
+  }, [isCreatingNewClient, selectedClientId, newClientName, newClientPhone, activeClients]);
+
+  // Verificação em tempo real de conflitos:
+  // 1. Mesmo profissional com mais de 1 cliente no mesmo dia e horário
+  // 2. Mesmo cliente agendado com profissionais diferentes no mesmo dia e horário
+  const activeConflict = useMemo(() => {
+    if (!date || !startTime || !calculatedEndTime) return null;
+    const targetProId = professionalId || activeProfessionals[0]?.id || '';
+    if (!targetProId) return null;
+
+    const result = checkAppointmentConflict({
+      appointments: activeAppointments,
+      professionals: activeProfessionals,
+      date,
+      startTime,
+      endTime: calculatedEndTime,
+      professionalId: targetProId,
+      client: resolvedClient,
+    });
+
+    return result.hasConflict ? result : null;
+  }, [
+    activeAppointments,
+    activeProfessionals,
+    date,
+    startTime,
+    calculatedEndTime,
+    professionalId,
+    resolvedClient,
+  ]);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    setFormError('');
 
     if (!currentBusiness) {
-      alert('Cadastre um estabelecimento antes de criar agendamentos.');
+      setFormError('Cadastre um estabelecimento antes de criar agendamentos.');
       return;
     }
 
@@ -102,7 +178,7 @@ export const NewAppointmentModal: React.FC = () => {
 
     if (isCreatingNewClient || !selectedClientId) {
       if (!newClientName.trim() || !newClientPhone.trim()) {
-        alert('Por favor informe o nome e telefone do cliente.');
+        setFormError('Por favor informe o nome e telefone do cliente.');
         return;
       }
       const createdClient = addClient({
@@ -121,16 +197,47 @@ export const NewAppointmentModal: React.FC = () => {
     }
 
     if (!selectedService) {
-      alert('Selecione um serviço.');
+      setFormError('Selecione um serviço.');
       return;
     }
 
-    addAppointment({
+    const targetProId = professionalId || activeProfessionals[0]?.id || 'pro_1';
+
+    if (
+      selectedService.allowedProfessionalIds &&
+      selectedService.allowedProfessionalIds.length > 0 &&
+      !selectedService.allowedProfessionalIds.includes(targetProId)
+    ) {
+      setFormError('O profissional selecionado não está habilitado para realizar este serviço.');
+      return;
+    }
+
+    // Bloqueio rigoroso de conflitos antes do envio
+    const conflictCheck = checkAppointmentConflict({
+      appointments: activeAppointments,
+      professionals: activeProfessionals,
+      date,
+      startTime,
+      endTime: calculatedEndTime,
+      professionalId: targetProId,
+      client: {
+        id: clientId,
+        name: clientName,
+        phone: clientPhone,
+      },
+    });
+
+    if (conflictCheck.hasConflict) {
+      setFormError(conflictCheck.message || 'Conflito de agendamento detectado.');
+      return;
+    }
+
+    const result = addAppointment({
       businessId: currentBusiness.id,
       clientId,
       clientName,
       clientPhone,
-      professionalId: professionalId || activeProfessionals[0]?.id || 'pro_1',
+      professionalId: targetProId,
       serviceId: selectedService.id,
       serviceName: selectedService.name,
       date,
@@ -142,13 +249,21 @@ export const NewAppointmentModal: React.FC = () => {
       notes: notes.trim() || undefined,
     });
 
+    if (result && !result.success) {
+      setFormError(result.error || 'Não foi possível concluir o agendamento.');
+      return;
+    }
+
     handleClose();
     // Reset form
     setNewClientName('');
     setNewClientPhone('');
     setIsCreatingNewClient(false);
     setNotes('');
+    setFormError('');
   };
+
+  if (!isNewAppointmentModalOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50">
@@ -192,15 +307,16 @@ export const NewAppointmentModal: React.FC = () => {
                   placeholder="Nome completo do cliente"
                   value={newClientName}
                   onChange={(e) => setNewClientName(e.target.value)}
-                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500"
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-slate-500"
                 />
-                <input
-                  type="text"
+                <MaskedInput
+                  maskType="phone"
                   required
                   placeholder="WhatsApp / Telefone"
                   value={newClientPhone}
-                  onChange={(e) => setNewClientPhone(e.target.value)}
-                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500"
+                  leftIcon={<Phone className="w-3.5 h-3.5" />}
+                  onValueChange={(cleanVal) => setNewClientPhone(cleanVal)}
+                  showValidationFeedback={true}
                 />
               </div>
             ) : (
@@ -241,16 +357,24 @@ export const NewAppointmentModal: React.FC = () => {
 
           {/* Professional Selection */}
           <div>
-            <label className="text-xs font-semibold text-slate-700 block mb-1.5">
-              Profissional Responsável
-            </label>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className="text-xs font-semibold text-slate-700">
+                Profissional Responsável
+              </label>
+              {selectedService?.allowedProfessionalIds &&
+                selectedService.allowedProfessionalIds.length > 0 && (
+                  <span className="text-[10px] text-indigo-600 font-medium">
+                    ({availableProfessionalsForService.length} habilitados p/ este serviço)
+                  </span>
+                )}
+            </div>
             <select
               value={professionalId}
               onChange={(e) => setProfessionalId(e.target.value)}
               required
               className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 bg-white"
             >
-              {activeProfessionals.map((pro) => (
+              {availableProfessionalsForService.map((pro) => (
                 <option key={pro.id} value={pro.id}>
                   {pro.name} ({pro.specialties[0] || 'Especialista'})
                 </option>
@@ -318,6 +442,32 @@ export const NewAppointmentModal: React.FC = () => {
             />
           </div>
 
+          {/* Real-time Conflict Alert Banner */}
+          {activeConflict && (
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-start gap-2.5 animate-in fade-in duration-150">
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <div className="flex-1 leading-relaxed">
+                <p className="font-bold text-rose-900">
+                  {activeConflict.conflictType === 'professional_conflict'
+                    ? 'Horário Ocupado para este Profissional'
+                    : 'Conflito de Horário do Cliente'}
+                </p>
+                <p className="mt-0.5 text-rose-700">{activeConflict.message}</p>
+                <p className="text-[11px] text-rose-600 font-medium mt-1">
+                  💡 Escolha outro horário ou profissional para continuar.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Form Error Banner */}
+          {formError && !activeConflict && (
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-rose-800 text-xs flex items-start gap-2.5">
+              <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <p className="flex-1 font-medium">{formError}</p>
+            </div>
+          )}
+
           {/* Action buttons */}
           <div className="flex items-center justify-end gap-2 pt-2">
             <button
@@ -329,7 +479,12 @@ export const NewAppointmentModal: React.FC = () => {
             </button>
             <button
               type="submit"
-              className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold transition-colors shadow-xs cursor-pointer"
+              disabled={Boolean(activeConflict)}
+              className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors shadow-xs ${
+                activeConflict
+                  ? 'bg-slate-200 text-slate-400 cursor-not-allowed border border-slate-300'
+                  : 'bg-slate-900 hover:bg-slate-800 text-white cursor-pointer'
+              }`}
             >
               Confirmar Agendamento
             </button>

@@ -1,9 +1,10 @@
-export type RoleType = 'super_admin' | 'tenant_manager' | 'professional';
+export type RoleType = 'super_admin' | 'tenant_manager' | 'professional' | 'client';
 
 export interface CustomUserClaims {
   role: RoleType;
   tenant_id?: string;
   professional_id?: string;
+  client_id?: string;
   email?: string;
   name?: string;
   issuedAt?: number;
@@ -27,7 +28,7 @@ export interface AuthSessionState {
   isLoading: boolean;
 }
 
-export type AppRouteScope = 'public' | 'super_admin' | 'tenant_manager' | 'professional';
+export type AppRouteScope = 'public' | 'super_admin' | 'tenant_manager' | 'professional' | 'client';
 
 export interface RoutePermissionConfig {
   path: string;

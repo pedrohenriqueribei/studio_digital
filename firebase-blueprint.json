@@ -6,6 +6,7 @@
       "type": "object",
       "properties": {
         "id": { "type": "string" },
+        "tenant_id": { "type": "string" },
         "name": { "type": "string" },
         "type": { "type": "string", "enum": ["clinica_estetica", "salao_beleza", "barbearia"] },
         "tradeName": { "type": "string" },
@@ -18,7 +19,10 @@
         "avatarUrl": { "type": "string" },
         "status": { "type": "string", "enum": ["ativo", "degustacao", "suspenso"] },
         "createdAt": { "type": "string" },
-        "monthlyRevenue": { "type": "number" }
+        "monthlyRevenue": { "type": "number" },
+        "managerName": { "type": "string" },
+        "managerEmail": { "type": "string" },
+        "managerPassword": { "type": "string" }
       },
       "required": ["id", "name", "type", "tradeName", "city", "state", "phone", "planId", "status"]
     },
@@ -46,18 +50,22 @@
       "properties": {
         "id": { "type": "string" },
         "businessId": { "type": "string" },
+        "tenant_id": { "type": "string" },
         "name": { "type": "string" },
         "email": { "type": "string" },
         "phone": { "type": "string" },
-        "role": { "type": "string", "enum": ["superadmin", "ceo", "gerente", "profissional"] },
+        "role": { "type": "string", "enum": ["superadmin", "ceo", "gerente", "profissional", "tenant_manager", "professional"] },
         "avatar": { "type": "string" },
         "specialties": { "type": "array" },
         "commissionPercentage": { "type": "number" },
         "active": { "type": "boolean" },
         "totalEarningsMonth": { "type": "number" },
-        "appointmentsCountMonth": { "type": "number" }
+        "appointmentsCountMonth": { "type": "number" },
+        "availabilityPeriods": { "type": "array" },
+        "availabilityConfig": { "type": "object" },
+        "workHours": { "type": "object" }
       },
-      "required": ["id", "businessId", "name", "email", "role", "commissionPercentage", "active"]
+      "required": ["id", "name", "email", "role", "commissionPercentage", "active"]
     },
     "Service": {
       "title": "Service",
@@ -66,6 +74,7 @@
       "properties": {
         "id": { "type": "string" },
         "businessId": { "type": "string" },
+        "tenant_id": { "type": "string" },
         "name": { "type": "string" },
         "category": { "type": "string" },
         "durationMinutes": { "type": "number" },
@@ -75,7 +84,7 @@
         "allowedProfessionalIds": { "type": "array" },
         "active": { "type": "boolean" }
       },
-      "required": ["id", "businessId", "name", "durationMinutes", "price", "commissionPercentage", "active"]
+      "required": ["id", "name", "durationMinutes", "price", "commissionPercentage", "active"]
     },
     "Appointment": {
       "title": "Appointment",
@@ -84,6 +93,7 @@
       "properties": {
         "id": { "type": "string" },
         "businessId": { "type": "string" },
+        "tenant_id": { "type": "string" },
         "clientId": { "type": "string" },
         "clientName": { "type": "string" },
         "clientPhone": { "type": "string" },
@@ -98,7 +108,7 @@
         "paymentStatus": { "type": "string", "enum": ["pendente", "pago"] },
         "notes": { "type": "string" }
       },
-      "required": ["id", "businessId", "clientId", "clientName", "professionalId", "serviceId", "date", "startTime", "endTime", "status", "price"]
+      "required": ["id", "clientId", "clientName", "professionalId", "serviceId", "date", "startTime", "endTime", "status", "price"]
     },
     "Client": {
       "title": "Client",
@@ -107,15 +117,28 @@
       "properties": {
         "id": { "type": "string" },
         "businessId": { "type": "string" },
+        "tenant_id": { "type": "string" },
         "name": { "type": "string" },
         "phone": { "type": "string" },
         "email": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "birthDay": { "type": "number" },
+        "birthMonth": { "type": "number" },
+        "birthDateFormatted": { "type": "string" },
+        "emailVerified": { "type": "boolean" },
         "totalVisits": { "type": "number" },
         "totalSpent": { "type": "number" },
         "lastVisit": { "type": "string" },
-        "notes": { "type": "string" }
+        "notes": { "type": "string" },
+        "tags": { "type": "array" },
+        "preferences": { "type": "object" },
+        "importantNotes": { "type": "array" },
+        "preferredProfessionalId": { "type": "string" },
+        "preferredProfessionalName": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
       },
-      "required": ["id", "businessId", "name", "phone"]
+      "required": ["id", "name", "phone", "email"]
     },
     "Comanda": {
       "title": "Comanda",
@@ -124,6 +147,7 @@
       "properties": {
         "id": { "type": "string" },
         "businessId": { "type": "string" },
+        "tenant_id": { "type": "string" },
         "appointmentId": { "type": "string" },
         "clientName": { "type": "string" },
         "clientPhone": { "type": "string" },
@@ -137,13 +161,40 @@
         "status": { "type": "string", "enum": ["aberta", "fechada"] },
         "createdAt": { "type": "string" }
       },
-      "required": ["id", "businessId", "clientName", "professionalId", "subtotal", "total", "status"]
+      "required": ["id", "clientName", "professionalId", "subtotal", "total", "status"]
+    },
+    "AvailabilityPeriod": {
+      "title": "AvailabilityPeriod",
+      "description": "Flexible availability schedules and shifts registered per professional",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "professionalId": { "type": "string" },
+        "businessId": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "title": { "type": "string" },
+        "startDate": { "type": "string" },
+        "endDate": { "type": "string" },
+        "daysOfWeek": { "type": "array" },
+        "shifts": { "type": "array" },
+        "startTime": { "type": "string" },
+        "endTime": { "type": "string" },
+        "active": { "type": "boolean" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "startDate", "endDate", "daysOfWeek", "shifts", "active"]
     }
   },
   "firestore": {
     "/businesses/{businessId}": {
       "schema": "#/entities/Business",
       "description": "Tenant establishments"
+    },
+    "/tenants/{tenantId}": {
+      "schema": "#/entities/Business",
+      "description": "Hierarchical multi-tenant root documents"
     },
     "/saasPlans/{planId}": {
       "schema": "#/entities/SaaSPlan",
@@ -152,6 +203,10 @@
     "/professionals/{professionalId}": {
       "schema": "#/entities/Professional",
       "description": "Specialists and staff members across businesses"
+    },
+    "/availabilities/{availabilityId}": {
+      "schema": "#/entities/AvailabilityPeriod",
+      "description": "Availability periods and shifts for professionals"
     },
     "/services/{serviceId}": {
       "schema": "#/entities/Service",

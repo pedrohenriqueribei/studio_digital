@@ -46,6 +46,7 @@ export const Sidebar: React.FC = () => {
     setIsLoginModalOpen,
     businesses,
     professionals,
+    services,
     saasPlans,
     navigateTo,
     currentPath,
@@ -126,6 +127,12 @@ export const Sidebar: React.FC = () => {
       label: 'Profissionais Globais',
       icon: Users,
       badge: professionals.length,
+    },
+    {
+      id: 'servicos',
+      label: 'Catálogo de Serviços',
+      icon: Scissors,
+      badge: services.length,
     },
     {
       id: 'planos',
@@ -416,7 +423,9 @@ export const Sidebar: React.FC = () => {
               : tenantNavItems
             ).map((item) => {
               const Icon = item.icon;
-              const isActive = activeTab === item.id;
+              const isActive = isProfessionalRole && item.id === 'clientes'
+                ? currentPath === '/app/profissional/clientes'
+                : activeTab === item.id;
               const label = isProfessionalRole && item.id === 'agenda'
                 ? 'Minha Agenda'
                 : isProfessionalRole && item.id === 'dashboard'
@@ -431,7 +440,11 @@ export const Sidebar: React.FC = () => {
                   onClick={() => {
                     setActiveTab(item.id);
                     if (isProfessionalRole) {
-                      navigateTo('/app/profissional/agenda');
+                      if (item.id === 'clientes') {
+                        navigateTo('/app/profissional/clientes');
+                      } else {
+                        navigateTo('/app/profissional/agenda');
+                      }
                     } else {
                       navigateTo('/app/gerente/' + item.id);
                     }
