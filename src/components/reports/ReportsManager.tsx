@@ -34,6 +34,7 @@ import {
   ArrowDownRight,
   Eye,
   Check,
+  Tv,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -56,9 +57,10 @@ import { useApp } from '../../context/AppContext';
 import { Appointment, Comanda, Professional, Service, Client } from '../../types';
 import { getTodayDateString } from '../../utils/date';
 import { formatCurrency } from '../../utils/availability';
+import { QueueVsAppointmentsReport } from './QueueVsAppointmentsReport';
 
 type PeriodOption = 'hoje' | '7d' | '30d' | 'mes' | '90d' | 'ano' | 'customizado';
-type ActiveSubView = 'visao_geral' | 'profissionais' | 'servicos' | 'receita' | 'horarios_retencao';
+type ActiveSubView = 'visao_geral' | 'fila_vs_agendados' | 'profissionais' | 'servicos' | 'receita' | 'horarios_retencao';
 
 export interface ProfessionalMetricItem {
   id: string;
@@ -100,6 +102,7 @@ export const ReportsManager: React.FC = () => {
     activeServices,
     activeComandas,
     activeClients,
+    activeQueueItems,
     currentRole,
     currentProfessional,
     openNewAppointmentModal,
@@ -114,7 +117,7 @@ export const ReportsManager: React.FC = () => {
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [activeSubView, setActiveSubView] = useState<ActiveSubView>('visao_geral');
-  const [useSimulatedFallback, setUseSimulatedFallback] = useState<boolean>(true);
+  const [useSimulatedFallback, setUseSimulatedFallback] = useState<boolean>(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
 
   // Calcula limites de data com base no período selecionado
@@ -629,12 +632,7 @@ export const ReportsManager: React.FC = () => {
           { name: 'Cartão de Débito', value: Math.round(((counts.cartao_debito || 0) / (totalGrossRevenue || 1)) * 100), amount: counts.cartao_debito || 0, color: '#8b5cf6' },
           { name: 'Dinheiro em Espécie', value: Math.round(((counts.dinheiro || 0) / (totalGrossRevenue || 1)) * 100), amount: counts.dinheiro || 0, color: '#f59e0b' },
         ].filter((item) => item.amount > 0 || item.value > 0)
-      : [
-          { name: 'PIX Instantâneo', value: 50, amount: totalGrossRevenue * 0.5, color: '#10b981' },
-          { name: 'Cartão de Crédito', value: 35, amount: totalGrossRevenue * 0.35, color: '#3b82f6' },
-          { name: 'Cartão de Débito', value: 10, amount: totalGrossRevenue * 0.1, color: '#8b5cf6' },
-          { name: 'Dinheiro em Espécie', value: 5, amount: totalGrossRevenue * 0.05, color: '#f59e0b' },
-        ];
+      : [];
 
     // Linha do tempo real diária
     const map = new Map<string, { faturamento: number; faturamentoRealizado: number; volume: number }>();
@@ -1195,6 +1193,7 @@ export const ReportsManager: React.FC = () => {
       <div className="flex items-center gap-2 border-b border-slate-200 pb-2 overflow-x-auto print:hidden">
         {[
           { id: 'visao_geral', label: 'Visão Geral & Gráficos', icon: BarChart3 },
+          { id: 'fila_vs_agendados', label: 'Fila Virtual vs. Agendados', icon: Tv },
           { id: 'profissionais', label: 'Agendamentos por Profissional', icon: Users, badge: professionalMetrics.ranking.length },
           { id: 'servicos', label: 'Serviços Mais Procurados', icon: Scissors, badge: servicesMetrics.ranking.length },
           { id: 'receita', label: 'Receita & Comissões', icon: DollarSign },
@@ -1233,6 +1232,13 @@ export const ReportsManager: React.FC = () => {
       {/* ===================================================================== */}
       {activeSubView === 'visao_geral' && (
         <div className="space-y-6">
+          {/* Relatório Rápido: Fila Virtual vs. Agendamentos Fixos e Taxa de Ocupação Diária */}
+          <QueueVsAppointmentsReport
+            appointments={activeAppointments}
+            queueItems={activeQueueItems}
+            professionals={activeProfessionals}
+          />
+
           {/* Gráfico Principal Composto: Evolução Diária da Receita & Volume */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-5 sm:p-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
@@ -1431,6 +1437,20 @@ export const ReportsManager: React.FC = () => {
               </div>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* ABA ESPECÍFICA: FILA VIRTUAL VS. AGENDADOS & TAXA DE OCUPAÇÃO DIÁRIA  */}
+      {/* ===================================================================== */}
+      {activeSubView === 'fila_vs_agendados' && (
+        <div className="space-y-6">
+          <QueueVsAppointmentsReport
+            appointments={activeAppointments}
+            queueItems={activeQueueItems}
+            professionals={activeProfessionals}
+            selectedDate={selectedPeriod === 'hoje' ? startDate : undefined}
+          />
         </div>
       )}
 

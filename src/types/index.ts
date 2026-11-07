@@ -45,8 +45,14 @@ export interface Business {
   avatarUrl?: string;
   status: TenantStatus;
   createdAt: string;
+  // Métricas operacionais (sempre inicializadas com 0)
   monthlyRevenue?: number;
   monthlyRevenueGoal?: number;
+  totalAppointmentsCount?: number;
+  totalClientsCount?: number;
+  totalServicesCount?: number;
+  totalComandasCount?: number;
+  totalRevenueRealized?: number;
   managerName?: string;
   managerEmail?: string;
   managerPassword?: string;

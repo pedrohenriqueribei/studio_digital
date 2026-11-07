@@ -152,9 +152,10 @@ export const VirtualQueueManager: React.FC = () => {
     await callQueueTicket(id);
   };
 
-  // Rechamar com som
-  const handleRepeatCall = (ticketNumber: string) => {
+  // Rechamar com som e atualizar carimbo de chamada em tempo real no Firestore
+  const handleRepeatCall = async (item: VirtualQueueItem) => {
     playReceptionChime();
+    await callQueueTicket(item.id);
   };
 
   // Abrir modal de início de atendimento para escolher profissional se for "Qualquer disponível"
@@ -671,7 +672,7 @@ export const VirtualQueueManager: React.FC = () => {
 
                     <div className="flex items-center justify-between gap-2">
                       <button
-                        onClick={() => handleRepeatCall(item.ticketNumber)}
+                        onClick={() => handleRepeatCall(item)}
                         className="px-2.5 py-1 text-[11px] font-semibold text-amber-700 hover:bg-amber-50 rounded-lg transition-colors cursor-pointer flex items-center gap-1"
                       >
                         <Volume2 className="w-3.5 h-3.5" />

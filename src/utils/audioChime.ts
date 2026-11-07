@@ -64,3 +64,27 @@ export function playReceptionChime(): void {
     console.warn('Audio chime notice:', err);
   }
 }
+
+/**
+ * Anúncio de voz sintetizado em Português para chamada de senhas no Painel de TV.
+ */
+export function announceTicketVoice(
+  ticketNumber: string,
+  clientName: string,
+  professionalName?: string
+): void {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+  try {
+    window.speechSynthesis.cancel();
+    const proText = professionalName ? `com ${professionalName}` : 'ao atendimento';
+    const utterance = new SpeechSynthesisUtterance(
+      `Senha ${ticketNumber}. ${clientName}, dirigir-se ${proText}.`
+    );
+    utterance.lang = 'pt-BR';
+    utterance.rate = 0.95;
+    utterance.pitch = 1.0;
+    window.speechSynthesis.speak(utterance);
+  } catch (err) {
+    console.warn('Speech synthesis notice:', err);
+  }
+}

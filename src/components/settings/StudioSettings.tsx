@@ -70,7 +70,7 @@ export const StudioSettings: React.FC = () => {
       `gerente@${currentBusiness.tradeName.toLowerCase().replace(/\s+/g, '')}.com`
   );
   const [managerPassword, setManagerPassword] = useState(
-    currentBusiness.managerPassword || 'gerente123'
+    currentBusiness.managerPassword || ''
   );
   const [showManagerPassword, setShowManagerPassword] = useState(false);
   const [autoWhatsapp, setAutoWhatsapp] = useState(true);
@@ -91,7 +91,7 @@ export const StudioSettings: React.FC = () => {
         currentBusiness.managerEmail ||
           `gerente@${currentBusiness.tradeName.toLowerCase().replace(/\s+/g, '')}.com`
       );
-      setManagerPassword(currentBusiness.managerPassword || 'gerente123');
+      setManagerPassword(currentBusiness.managerPassword || '');
     }
   }, [currentBusiness?.id]);
 

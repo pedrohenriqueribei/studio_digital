@@ -839,7 +839,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const unsubBiz = onSnapshot(collection(db, 'businesses'), (snapshot) => {
       const firestoreBizs: Business[] = [];
       snapshot.forEach((doc) => {
-        firestoreBizs.push(doc.data() as Business);
+        const raw = doc.data() as Business;
+        // Purga qualquer valor residual mock como 18450 herdado de testes anteriores
+        const cleanRevenue = raw.monthlyRevenue === 18450 || typeof raw.monthlyRevenue !== 'number' ? 0 : raw.monthlyRevenue;
+        const bizItem: Business = {
+          ...raw,
+          monthlyRevenue: cleanRevenue,
+          monthlyRevenueGoal: typeof raw.monthlyRevenueGoal === 'number' ? raw.monthlyRevenueGoal : 0,
+          totalAppointmentsCount: typeof raw.totalAppointmentsCount === 'number' ? raw.totalAppointmentsCount : 0,
+          totalClientsCount: typeof raw.totalClientsCount === 'number' ? raw.totalClientsCount : 0,
+          totalServicesCount: typeof raw.totalServicesCount === 'number' ? raw.totalServicesCount : 0,
+          totalComandasCount: typeof raw.totalComandasCount === 'number' ? raw.totalComandasCount : 0,
+          totalRevenueRealized: typeof raw.totalRevenueRealized === 'number' ? raw.totalRevenueRealized : 0,
+        };
+        // Se tinha 18450 gravado no Firestore, autocorrige para 0
+        if (raw.monthlyRevenue === 18450) {
+          syncBusinessToFirestore(bizItem).catch(console.warn);
+        }
+        firestoreBizs.push(bizItem);
       });
       setBusinesses(firestoreBizs);
       if (firestoreBizs.length > 0) {
@@ -1009,22 +1026,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ...newBiz,
       id,
       tenant_id: id,
+      name: newBiz.name.trim(),
+      tradeName: (newBiz.tradeName || newBiz.name).trim(),
+      type: newBiz.type,
+      city: newBiz.city.trim(),
+      state: newBiz.state.trim().toUpperCase(),
+      phone: newBiz.phone.trim(),
+      cnpj: newBiz.cnpj?.trim() || undefined,
+      planId: newBiz.planId || 'pro',
+      accentColor: newBiz.accentColor || '#0f172a',
       status: 'ativo',
       createdAt: today,
+      // Métricas operacionais explicitamente zeradas
       monthlyRevenue: 0,
+      monthlyRevenueGoal: typeof newBiz.monthlyRevenueGoal === 'number' ? newBiz.monthlyRevenueGoal : 0,
+      totalAppointmentsCount: 0,
+      totalClientsCount: 0,
+      totalServicesCount: 0,
+      totalComandasCount: 0,
+      totalRevenueRealized: 0,
+      avatarUrl: undefined,
+      address: undefined,
+      neighborhood: undefined,
+      zipCode: undefined,
+      latitude: undefined,
+      longitude: undefined,
       managerName: mgrName,
       managerEmail: mgrEmail,
       managerPassword: mgrPass,
     };
 
-    // 1. Create or ensure user in Firebase Authentication
+    // 1. Purga e zera quaisquer subcoleções residuais no Firestore para este tenant_id
+    await resetTenantDataToZero(id);
+
+    // 2. Limpa dados residuais em localStorage para o novo tenant
+    if (typeof window !== 'undefined') {
+      try {
+        Object.keys(localStorage).forEach((key) => {
+          if (key.includes(id) || key.startsWith('studiodigital_goal_')) {
+            localStorage.removeItem(key);
+          }
+        });
+      } catch (e) {
+        console.warn('Erro ao limpar localStorage do tenant:', e);
+      }
+    }
+
+    // 3. Create or ensure user in Firebase Authentication
     try {
       await createTenantUserInFirebaseAuth(mgrEmail, mgrPass);
     } catch (authErr) {
       console.warn('Firebase Auth user creation notice:', authErr);
     }
 
-    // 2. Persist Business to Firestore with monthly revenue starting at R$ 0,00
+    // 4. Persist Business to Firestore with monthly revenue starting at R$ 0,00
     await syncBusinessToFirestore(created);
 
     // 3. Cadastra o gestor responsável como primeiro usuário administrativo do negócio (dados zerados)

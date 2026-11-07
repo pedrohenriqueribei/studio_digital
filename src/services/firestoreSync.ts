@@ -82,17 +82,46 @@ export function handleFirestoreError(
 export async function syncBusinessToFirestore(business: Business): Promise<boolean> {
   const docPath = `businesses/${business.id}`;
   try {
-    const cleanDoc: Record<string, any> = { ...business };
-    // Remove undefined values to avoid Firestore serialization errors
+    const cleanDoc: Record<string, any> = {
+      id: business.id,
+      tenant_id: business.tenant_id || business.id,
+      name: business.name,
+      tradeName: business.tradeName || business.name,
+      type: business.type,
+      city: business.city,
+      state: business.state,
+      phone: business.phone,
+      cnpj: business.cnpj ?? null,
+      planId: business.planId,
+      accentColor: business.accentColor || '#0f172a',
+      avatarUrl: business.avatarUrl ?? null,
+      status: business.status || 'ativo',
+      createdAt: business.createdAt || new Date().toISOString().split('T')[0],
+      // Métricas operacionais explicitamente zeradas
+      monthlyRevenue: typeof business.monthlyRevenue === 'number' ? business.monthlyRevenue : 0,
+      monthlyRevenueGoal: typeof business.monthlyRevenueGoal === 'number' ? business.monthlyRevenueGoal : 0,
+      totalAppointmentsCount: typeof business.totalAppointmentsCount === 'number' ? business.totalAppointmentsCount : 0,
+      totalClientsCount: typeof business.totalClientsCount === 'number' ? business.totalClientsCount : 0,
+      totalServicesCount: typeof business.totalServicesCount === 'number' ? business.totalServicesCount : 0,
+      totalComandasCount: typeof business.totalComandasCount === 'number' ? business.totalComandasCount : 0,
+      totalRevenueRealized: typeof business.totalRevenueRealized === 'number' ? business.totalRevenueRealized : 0,
+      managerName: business.managerName ?? null,
+      managerEmail: business.managerEmail ?? null,
+      managerPassword: business.managerPassword ?? null,
+      address: business.address ?? null,
+      neighborhood: business.neighborhood ?? null,
+      zipCode: business.zipCode ?? null,
+      latitude: business.latitude ?? null,
+      longitude: business.longitude ?? null,
+    };
+
+    // Remove any undefined values to avoid Firestore serialization errors
     Object.keys(cleanDoc).forEach((key) => {
       if (cleanDoc[key] === undefined) {
         delete cleanDoc[key];
       }
     });
-    // Ensure tenant_id is set
-    if (!cleanDoc.tenant_id) {
-      cleanDoc.tenant_id = cleanDoc.id;
-    }
+
     await setDoc(doc(db, 'businesses', business.id), cleanDoc, { merge: true });
     return true;
   } catch (err) {

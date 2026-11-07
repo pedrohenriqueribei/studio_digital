@@ -18,7 +18,8 @@ export const NewStudioModal: React.FC = () => {
   // Manager Credentials (Firebase Auth)
   const [managerName, setManagerName] = useState('');
   const [managerEmail, setManagerEmail] = useState('');
-  const [managerPassword, setManagerPassword] = useState('gerente123');
+  const [managerPassword, setManagerPassword] = useState('');
+  const [monthlyRevenueGoal, setMonthlyRevenueGoal] = useState<string>('0');
   const [showPassword, setShowPassword] = useState(false);
 
   if (!isNewStudioModalOpen) return null;
@@ -44,6 +45,8 @@ export const NewStudioModal: React.FC = () => {
       }
     }
 
+    const cleanGoal = Number(monthlyRevenueGoal.replace(/\D/g, '')) || 0;
+
     await registerBusiness({
       name: name.trim(),
       type,
@@ -59,6 +62,14 @@ export const NewStudioModal: React.FC = () => {
         managerEmail.trim() ||
         `gerente@${name.trim().toLowerCase().replace(/\s+/g, '')}.com`,
       managerPassword: managerPassword.trim() || 'gerente123',
+      // Inicialização explícita de métricas zeradas
+      monthlyRevenue: 0,
+      monthlyRevenueGoal: cleanGoal,
+      totalAppointmentsCount: 0,
+      totalClientsCount: 0,
+      totalServicesCount: 0,
+      totalComandasCount: 0,
+      totalRevenueRealized: 0,
     });
 
     setIsNewStudioModalOpen(false);
@@ -204,6 +215,27 @@ export const NewStudioModal: React.FC = () => {
                 </div>
               ))}
             </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-semibold text-slate-700 block mb-1">
+              Meta de Faturamento Mensal (Opcional - R$)
+            </label>
+            <div className="relative">
+              <span className="text-xs text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 font-mono font-bold">R$</span>
+              <input
+                type="number"
+                min="0"
+                step="500"
+                value={monthlyRevenueGoal}
+                onChange={(e) => setMonthlyRevenueGoal(e.target.value)}
+                placeholder="0 (Pode ser definida posteriormente)"
+                className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 font-mono"
+              />
+            </div>
+            <p className="text-[10px] text-slate-400 mt-0.5">
+              O novo estabelecimento inicia com faturamento e atendimentos 100% zerados (R$ 0,00).
+            </p>
           </div>
 
           {/* Manager Profile & Firebase Auth Access */}

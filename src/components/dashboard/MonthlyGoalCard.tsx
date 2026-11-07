@@ -47,19 +47,20 @@ export const MonthlyGoalCard: React.FC<MonthlyGoalCardProps> = ({
   const currentMonthName = monthNames[currentMonthIdx];
 
   // Recupera ou define a meta padrão
+  // Recupera ou define a meta padrão
   const storageKey = `studiodigital_goal_${currentBusiness?.id || 'default'}_${monthPrefix}`;
   const initialGoal = useMemo(() => {
-    if (currentBusiness?.monthlyRevenueGoal && currentBusiness.monthlyRevenueGoal > 0) {
+    if (typeof currentBusiness?.monthlyRevenueGoal === 'number') {
       return currentBusiness.monthlyRevenueGoal;
     }
     if (typeof window !== 'undefined') {
       const stored = localStorage.getItem(storageKey);
       if (stored) {
         const parsed = Number(stored);
-        if (!isNaN(parsed) && parsed > 0) return parsed;
+        if (!isNaN(parsed) && parsed >= 0) return parsed;
       }
     }
-    return 30000; // Meta padrão recomendada para estúdios (R$ 30.000)
+    return 0; // Novos estabelecimentos iniciam com meta zerada até que o gestor a defina
   }, [currentBusiness?.id, currentBusiness?.monthlyRevenueGoal, storageKey]);
 
   const [monthlyGoal, setMonthlyGoal] = useState<number>(initialGoal);
@@ -70,7 +71,7 @@ export const MonthlyGoalCard: React.FC<MonthlyGoalCardProps> = ({
 
   // Sincroniza se a meta mudar no negócio
   useEffect(() => {
-    if (currentBusiness?.monthlyRevenueGoal && currentBusiness.monthlyRevenueGoal > 0) {
+    if (typeof currentBusiness?.monthlyRevenueGoal === 'number') {
       setMonthlyGoal(currentBusiness.monthlyRevenueGoal);
       setGoalInputValue(String(currentBusiness.monthlyRevenueGoal));
     }
@@ -95,39 +96,36 @@ export const MonthlyGoalCard: React.FC<MonthlyGoalCardProps> = ({
     const appsTotal = appsThisMonth.reduce((acc, a) => acc + (a.price || 0), 0);
     if (appsTotal > 0) return appsTotal;
 
-    // Se mesmo assim não houver concluídos, soma os agendamentos confirmados do mês como receita prevista
-    const scheduledTotal = activeAppointments
-      .filter((a) => a.date.startsWith(monthPrefix) && a.status !== 'cancelado')
-      .reduce((acc, a) => acc + (a.price || 0), 0);
-
-    return scheduledTotal > 0 ? scheduledTotal : 18450; // valor representativo caso seja estúdio recém-aberto em teste
+    // Se for um estúdio recém-criado sem atendimentos ou comandas, retorna estritamente 0
+    return 0;
   }, [activeComandas, activeAppointments, monthPrefix]);
 
   // 2. Cálculos Comparativos entre Realizado e Esperado
   const metrics = useMemo(() => {
-    const goal = monthlyGoal > 0 ? monthlyGoal : 1;
+    const isGoalDefined = monthlyGoal > 0;
+    const goal = isGoalDefined ? monthlyGoal : 0;
     // Progresso percentual da meta
-    const progressPct = Math.round((realizedRevenue / goal) * 100);
+    const progressPct = isGoalDefined ? Math.round((realizedRevenue / goal) * 100) : 0;
 
     // Ritmo esperado até o dia atual (Pacing): dia atual / total de dias do mês
     const expectedPacingPct = Math.min(100, Math.round((currentDay / totalDaysInMonth) * 100));
-    const expectedRevenueUpToToday = Math.round((goal * currentDay) / totalDaysInMonth);
+    const expectedRevenueUpToToday = isGoalDefined ? Math.round((goal * currentDay) / totalDaysInMonth) : 0;
 
     // Diferença em relação ao esperado para hoje
-    const pacingDifference = realizedRevenue - expectedRevenueUpToToday;
+    const pacingDifference = isGoalDefined ? realizedRevenue - expectedRevenueUpToToday : 0;
     const isPacingAhead = pacingDifference >= 0;
 
     // Faltante para a meta
-    const remainingToGoal = Math.max(0, goal - realizedRevenue);
-    const isGoalReached = realizedRevenue >= goal;
+    const remainingToGoal = isGoalDefined ? Math.max(0, goal - realizedRevenue) : 0;
+    const isGoalReached = isGoalDefined && realizedRevenue >= goal;
 
     // Projeção de faturamento no fechamento do mês baseado na média diária atual
     const dailyAverage = realizedRevenue / Math.max(1, currentDay);
     const projectedEndOfMonth = Math.round(dailyAverage * totalDaysInMonth);
-    const projectedPct = Math.round((projectedEndOfMonth / goal) * 100);
+    const projectedPct = isGoalDefined ? Math.round((projectedEndOfMonth / goal) * 100) : 0;
 
     // Faturamento diário necessário nos dias restantes para bater a meta
-    const neededDaily = remainingDays > 0 ? Math.round(remainingToGoal / remainingDays) : 0;
+    const neededDaily = isGoalDefined && remainingDays > 0 ? Math.round(remainingToGoal / remainingDays) : 0;
 
     return {
       goal,
@@ -265,11 +263,15 @@ export const MonthlyGoalCard: React.FC<MonthlyGoalCardProps> = ({
             </div>
             <div className="flex items-baseline gap-2">
               <span className="text-2xl sm:text-3xl font-black text-indigo-900 font-mono tracking-tight">
-                {formatCurrency(metrics.goal)}
+                {metrics.goal > 0 ? formatCurrency(metrics.goal) : 'R$ 0,00'}
               </span>
             </div>
             <span className="text-[11px] text-slate-500 block">
-              Esperado para hoje (dia {currentDay}): <strong>{formatCurrency(metrics.expectedRevenueUpToToday)}</strong>
+              {metrics.goal > 0 ? (
+                <>Esperado para hoje (dia {currentDay}): <strong>{formatCurrency(metrics.expectedRevenueUpToToday)}</strong></>
+              ) : (
+                'Meta ainda não definida para este mês'
+              )}
             </span>
           </div>
 

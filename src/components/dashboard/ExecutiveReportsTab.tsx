@@ -513,29 +513,6 @@ export const ExecutiveReportsTab: React.FC<ExecutiveReportsTabProps> = ({
       }
     });
 
-    const hasRealHourly = Object.values(counts).some((v) => v > 0);
-    if (!hasRealHourly) {
-      // Curva padrão com picos às 10h, 14h, 17h e 18h
-      const mockCurve: Record<string, number> = {
-        '08:00': 3,
-        '09:00': 8,
-        '10:00': 16,
-        '11:00': 14,
-        '12:00': 10,
-        '13:00': 9,
-        '14:00': 18,
-        '15:00': 15,
-        '16:00': 17,
-        '17:00': 22,
-        '18:00': 24,
-        '19:00': 12,
-      };
-      return hoursSlots.map((slot) => ({
-        hora: slot,
-        atendimentos: mockCurve[slot] || 0,
-      }));
-    }
-
     return hoursSlots.map((slot) => ({
       hora: slot,
       atendimentos: counts[slot] || 0,
@@ -560,15 +537,6 @@ export const ExecutiveReportsTab: React.FC<ExecutiveReportsTabProps> = ({
       const item = days.find((x) => x.key === d);
       if (item) item.count += 1;
     });
-
-    const hasData = days.some((d) => d.count > 0);
-    if (!hasData) {
-      const mockCounts = [12, 18, 22, 28, 38, 45, 6];
-      return days.map((d, i) => ({
-        dia: d.name,
-        atendimentos: mockCounts[i],
-      }));
-    }
 
     return days.map((d) => ({
       dia: d.name,
