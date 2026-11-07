@@ -17,10 +17,13 @@ import {
   CheckCheck,
   XCircle,
   Sparkles,
+  GripVertical,
+  ArrowRightLeft,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Appointment, AppointmentStatus } from '../../types';
 import { getTodayDateString, addDaysToDate, formatDateHeader } from '../../utils/date';
+import { timeToMinutes, minutesToTime } from '../../utils/availability';
 
 export const AgendaView: React.FC = () => {
   const {
@@ -28,6 +31,7 @@ export const AgendaView: React.FC = () => {
     activeProfessionals,
     activeServices,
     updateAppointmentStatus,
+    updateAppointment,
     setIsNewAppointmentModalOpen,
     openNewAppointmentModal,
     searchQuery,
@@ -44,6 +48,94 @@ export const AgendaView: React.FC = () => {
     currentRole === 'profissional' && currentProfessional ? currentProfessional.id : 'all'
   );
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
+
+  // Drag-and-drop state
+  const [draggedApp, setDraggedApp] = useState<Appointment | null>(null);
+  const [dragOverSlot, setDragOverSlot] = useState<{ proId: string; time: string } | null>(null);
+  const [dragFeedback, setDragFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Handlers for HTML5 drag-and-drop
+  const handleDragStart = (e: React.DragEvent, app: Appointment) => {
+    if (app.status === 'cancelado') return;
+    setDraggedApp(app);
+    e.dataTransfer.setData('text/plain', app.id);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragEnd = () => {
+    setDraggedApp(null);
+    setDragOverSlot(null);
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDragEnter = (e: React.DragEvent, proId: string, time: string) => {
+    e.preventDefault();
+    setDragOverSlot({ proId, time });
+  };
+
+  const handleDragLeave = (e: React.DragEvent, proId: string, time: string) => {
+    e.preventDefault();
+    setDragOverSlot((prev) => {
+      if (prev && prev.proId === proId && prev.time === time) {
+        return null;
+      }
+      return prev;
+    });
+  };
+
+  const handleDrop = (e: React.DragEvent, targetProId: string, targetTime: string) => {
+    e.preventDefault();
+    setDragOverSlot(null);
+
+    if (!draggedApp) return;
+
+    // Check if target is identical to current appointment
+    if (draggedApp.professionalId === targetProId && draggedApp.startTime === targetTime) {
+      setDraggedApp(null);
+      return;
+    }
+
+    const targetPro = activeProfessionals.find((p) => p.id === targetProId);
+    const targetProName = targetPro ? targetPro.name : draggedApp.professionalName;
+
+    // Compute appointment duration in minutes
+    const startMin = timeToMinutes(draggedApp.startTime);
+    const endMin = timeToMinutes(draggedApp.endTime);
+    const duration = (endMin > startMin ? endMin - startMin : 0) || draggedApp.durationMinutes || 45;
+
+    const newStartMin = timeToMinutes(targetTime);
+    const newEndMin = newStartMin + duration;
+    const newEndTime = minutesToTime(newEndMin);
+
+    const updatedApp: Appointment = {
+      ...draggedApp,
+      professionalId: targetProId,
+      professionalName: targetProName,
+      startTime: targetTime,
+      endTime: newEndTime,
+    };
+
+    const res = updateAppointment(updatedApp);
+    if (res.success) {
+      setDragFeedback({
+        type: 'success',
+        message: `Atendimento de ${draggedApp.clientName} movido com sucesso para ${targetTime} com ${targetProName}!`,
+      });
+      setTimeout(() => setDragFeedback(null), 4000);
+    } else {
+      setDragFeedback({
+        type: 'error',
+        message: res.error || 'Não foi possível reagendar devido a conflito de horário.',
+      });
+      setTimeout(() => setDragFeedback(null), 5000);
+    }
+
+    setDraggedApp(null);
+  };
 
   // Time grid slots starting from 08:00 through 19:30
   const defaultTimeSlots = [
@@ -437,6 +529,61 @@ export const AgendaView: React.FC = () => {
         </span>
       </div>
 
+      {/* Drag & Drop Feedback Alert Toast */}
+      {dragFeedback && (
+        <div
+          className={`p-3 rounded-xl border text-xs flex items-center justify-between gap-3 shadow-xs transition-all animate-in fade-in slide-in-from-top-2 ${
+            dragFeedback.type === 'success'
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+              : 'bg-rose-50 border-rose-200 text-rose-800'
+          }`}
+        >
+          <div className="flex items-center gap-2">
+            {dragFeedback.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0" />
+            )}
+            <span className="font-semibold">{dragFeedback.message}</span>
+          </div>
+          <button
+            onClick={() => setDragFeedback(null)}
+            className="text-slate-400 hover:text-slate-600 font-bold px-1.5 py-0.5 rounded cursor-pointer"
+          >
+            ✕
+          </button>
+        </div>
+      )}
+
+      {/* Active Dragging Instruction Banner */}
+      {draggedApp ? (
+        <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-xl text-xs text-indigo-900 flex items-center justify-between gap-3 animate-pulse shadow-2xs">
+          <div className="flex items-center gap-2">
+            <ArrowRightLeft className="w-4 h-4 text-indigo-600 shrink-0" />
+            <span>
+              <strong>Reagendando:</strong> {draggedApp.clientName} ({draggedApp.serviceName} - {draggedApp.startTime}).
+              Solte em qualquer horário ou coluna de especialista para atualizar automaticamente!
+            </span>
+          </div>
+          <button
+            onClick={handleDragEnd}
+            className="px-2 py-1 bg-white hover:bg-slate-100 text-slate-700 rounded-md border border-indigo-200 text-[11px] font-bold cursor-pointer"
+          >
+            Cancelar
+          </button>
+        </div>
+      ) : (
+        <div className="hidden sm:flex items-center justify-between px-3.5 py-2 bg-slate-50/90 border border-slate-200 rounded-xl text-xs text-slate-600">
+          <div className="flex items-center gap-2">
+            <Sparkles className="w-4 h-4 text-amber-500 shrink-0" />
+            <span>
+              <strong>Arrastar e Soltar:</strong> Arraste qualquer cartão de agendamento para outro horário ou especialista na grade para reagendar em tempo real.
+            </span>
+          </div>
+          <span className="text-[11px] text-slate-400 font-medium">Sincronização instantânea</span>
+        </div>
+      )}
+
       {/* Main Agenda Area */}
       {viewMode === 'columns' ? (
         activeProfessionals.length === 0 ? (
@@ -523,34 +670,73 @@ export const AgendaView: React.FC = () => {
                       const matchingApps = filteredAppointments.filter(
                         (app) => app.professionalId === pro.id && app.startTime === time
                       );
+                      const isDropTarget = dragOverSlot?.proId === pro.id && dragOverSlot?.time === time;
 
                       return (
                         <div
                           key={`${pro.id}-${time}`}
-                          className="p-1 border-b border-r border-slate-100 last:border-r-0 min-h-[64px] relative group hover:bg-slate-50/60 transition-colors bg-white"
+                          onDragOver={handleDragOver}
+                          onDragEnter={(e) => handleDragEnter(e, pro.id, time)}
+                          onDragLeave={(e) => handleDragLeave(e, pro.id, time)}
+                          onDrop={(e) => handleDrop(e, pro.id, time)}
+                          className={`p-1 border-b border-r border-slate-100 last:border-r-0 min-h-[68px] relative group transition-all ${
+                            isDropTarget
+                              ? 'bg-indigo-50/90 ring-2 ring-indigo-500 ring-inset z-10'
+                              : 'hover:bg-slate-50/60 bg-white'
+                          }`}
                         >
+                          {/* Drop Overlay when hovered during dragging */}
+                          {isDropTarget && (
+                            <div className="absolute inset-1 rounded-md bg-indigo-500/15 border-2 border-dashed border-indigo-600 flex flex-col items-center justify-center pointer-events-none z-20 animate-pulse text-[11px] font-bold text-indigo-700 px-1 text-center shadow-xs">
+                              <ArrowRightLeft className="w-4 h-4 mb-0.5 text-indigo-600" />
+                              <span>Mover para {time}</span>
+                            </div>
+                          )}
+
                           {matchingApps.length > 0 ? (
                             matchingApps.map((app) => {
                               const badge = getStatusBadge(app.status);
                               const nextAction = getNextStatusAction(app.status);
                               const BadgeIcon = badge.icon;
                               const isCancelled = app.status === 'cancelado';
+                              const isBeingDragged = draggedApp?.id === app.id;
 
                               return (
                                 <div
                                   key={app.id}
+                                  draggable={!isCancelled}
+                                  onDragStart={(e) => handleDragStart(e, app)}
+                                  onDragEnd={handleDragEnd}
                                   onClick={() => setSelectedAppointment(app)}
-                                  className={`p-2.5 rounded-lg border text-xs cursor-pointer shadow-2xs hover:shadow-sm transition-all relative ${badge.cardBorder}`}
+                                  className={`p-2.5 rounded-lg border text-xs cursor-pointer shadow-2xs hover:shadow-sm transition-all relative select-none ${badge.cardBorder} ${
+                                    !isCancelled
+                                      ? 'cursor-grab active:cursor-grabbing hover:border-indigo-300'
+                                      : ''
+                                  } ${
+                                    isBeingDragged
+                                      ? 'opacity-30 scale-95 ring-2 ring-indigo-500 shadow-md'
+                                      : ''
+                                  }`}
+                                  title={
+                                    !isCancelled
+                                      ? 'Clique para detalhes ou arraste para outro horário/profissional'
+                                      : undefined
+                                  }
                                 >
-                                  {/* Header with Client Name and Status Badge */}
+                                  {/* Header with Drag Handle, Client Name, and Status Badge */}
                                   <div className="flex items-start justify-between gap-1 mb-1.5">
-                                    <span
-                                      className={`font-bold text-slate-900 truncate ${
-                                        isCancelled ? 'line-through text-slate-400' : ''
-                                      }`}
-                                    >
-                                      {app.clientName}
-                                    </span>
+                                    <div className="flex items-center gap-1 min-w-0">
+                                      {!isCancelled && (
+                                        <GripVertical className="w-3.5 h-3.5 text-slate-400 group-hover:text-indigo-600 shrink-0 cursor-grab" />
+                                      )}
+                                      <span
+                                        className={`font-bold text-slate-900 truncate ${
+                                          isCancelled ? 'line-through text-slate-400' : ''
+                                        }`}
+                                      >
+                                        {app.clientName}
+                                      </span>
+                                    </div>
 
                                     {/* Visual Status Badge with icon */}
                                     <span
@@ -881,6 +1067,102 @@ export const AgendaView: React.FC = () => {
                 <div className="p-3 bg-amber-50/60 border border-amber-200 rounded-xl">
                   <span className="font-semibold text-amber-900 block mb-0.5">Observações:</span>
                   <p className="text-amber-800">{selectedAppointment.notes}</p>
+                </div>
+              )}
+
+              {/* Quick Reschedule & Reassign in Modal */}
+              {selectedAppointment.status !== 'cancelado' && (
+                <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                      <ArrowRightLeft className="w-3.5 h-3.5 text-indigo-600" />
+                      <span>Reagendar ou Transferir</span>
+                    </span>
+                    <span className="text-[10px] text-slate-500">Ou arraste diretamente na grade</span>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-[11px] text-slate-500 block mb-1">Especialista:</label>
+                      <select
+                        value={selectedAppointment.professionalId}
+                        onChange={(e) => {
+                          const newProId = e.target.value;
+                          const targetPro = activeProfessionals.find((p) => p.id === newProId);
+                          const updated: Appointment = {
+                            ...selectedAppointment,
+                            professionalId: newProId,
+                            professionalName: targetPro?.name || selectedAppointment.professionalName,
+                          };
+                          const res = updateAppointment(updated);
+                          if (res.success) {
+                            setSelectedAppointment(updated);
+                            setDragFeedback({
+                              type: 'success',
+                              message: `Especialista alterado para ${targetPro?.name || 'novo especialista'}.`,
+                            });
+                            setTimeout(() => setDragFeedback(null), 4000);
+                          } else {
+                            setDragFeedback({
+                              type: 'error',
+                              message: res.error || 'Conflito de horário com o especialista selecionado.',
+                            });
+                            setTimeout(() => setDragFeedback(null), 5000);
+                          }
+                        }}
+                        className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs font-medium text-slate-800"
+                      >
+                        {activeProfessionals.map((pro) => (
+                          <option key={pro.id} value={pro.id}>
+                            {pro.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] text-slate-500 block mb-1">Horário de Início:</label>
+                      <select
+                        value={selectedAppointment.startTime}
+                        onChange={(e) => {
+                          const newTime = e.target.value;
+                          const startMin = timeToMinutes(selectedAppointment.startTime);
+                          const endMin = timeToMinutes(selectedAppointment.endTime);
+                          const duration = (endMin > startMin ? endMin - startMin : 0) || selectedAppointment.durationMinutes || 45;
+                          const newStartMin = timeToMinutes(newTime);
+                          const newEndTime = minutesToTime(newStartMin + duration);
+
+                          const updated: Appointment = {
+                            ...selectedAppointment,
+                            startTime: newTime,
+                            endTime: newEndTime,
+                          };
+                          const res = updateAppointment(updated);
+                          if (res.success) {
+                            setSelectedAppointment(updated);
+                            setDragFeedback({
+                              type: 'success',
+                              message: `Horário reagendado para ${newTime} às ${newEndTime}.`,
+                            });
+                            setTimeout(() => setDragFeedback(null), 4000);
+                          } else {
+                            setDragFeedback({
+                              type: 'error',
+                              message: res.error || 'Conflito de horário no intervalo selecionado.',
+                            });
+                            setTimeout(() => setDragFeedback(null), 5000);
+                          }
+                        }}
+                        className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs font-mono font-medium text-slate-800"
+                      >
+                        {defaultTimeSlots.map((slot) => (
+                          <option key={slot} value={slot}>
+                            {slot}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
                 </div>
               )}
 

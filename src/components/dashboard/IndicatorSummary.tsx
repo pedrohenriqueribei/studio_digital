@@ -24,6 +24,7 @@ interface IndicatorSummaryProps {
   currentBusiness: Business | null;
   onNavigateTab?: (tab: 'agenda' | 'comandas' | 'clientes' | 'profissionais') => void;
   onOpenNewAppointment?: () => void;
+  onOpenReports?: () => void;
 }
 
 export const IndicatorSummary: React.FC<IndicatorSummaryProps> = ({
@@ -36,9 +37,10 @@ export const IndicatorSummary: React.FC<IndicatorSummaryProps> = ({
   currentBusiness,
   onNavigateTab,
   onOpenNewAppointment,
+  onOpenReports,
 }) => {
-  // Current month reference (ex: 2026-10)
-  const currentMonthPrefix = '2026-10';
+  // Current month reference (ex: dynamic YYYY-MM)
+  const currentMonthPrefix = useMemo(() => new Date().toISOString().slice(0, 7), []);
 
   // Filter appointments by role if professional
   const scopedAppointments = useMemo(() => {
@@ -238,7 +240,7 @@ export const IndicatorSummary: React.FC<IndicatorSummaryProps> = ({
 
         {/* Card 3: Taxa de Ocupação */}
         <div
-          onClick={() => onNavigateTab?.('agenda')}
+          onClick={() => (onOpenReports ? onOpenReports() : onNavigateTab?.('agenda'))}
           className="bg-white p-4 sm:p-5 rounded-2xl border border-slate-200/90 shadow-2xs hover:shadow-sm hover:border-slate-300 transition-all cursor-pointer group relative overflow-hidden"
         >
           <div className="flex items-center justify-between text-xs text-slate-400 mb-1.5">

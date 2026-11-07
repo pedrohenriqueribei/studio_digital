@@ -23,6 +23,9 @@ import { useApp } from '../../context/AppContext';
 import { WeeklyPerformanceChart } from './WeeklyPerformanceChart';
 import { FinancialDashboard } from './FinancialDashboard';
 import { IndicatorSummary } from './IndicatorSummary';
+import { MonthlyGoalCard } from './MonthlyGoalCard';
+import { ReportsManager } from '../reports/ReportsManager';
+import { TopPerformersRanking } from './TopPerformersRanking';
 import { getTodayDateString } from '../../utils/date';
 
 export const ExecutiveDashboard: React.FC = () => {
@@ -71,6 +74,8 @@ export const ExecutiveDashboard: React.FC = () => {
       .reduce((acc, c) => acc + c.total, 0);
   }, [activeComandas]);
 
+  const [dashboardView, setDashboardView] = useState<'operacional' | 'relatorios'>('operacional');
+
   return (
     <div className="space-y-6">
       {/* Welcome Banner with Role & Business Context */}
@@ -81,7 +86,9 @@ export const ExecutiveDashboard: React.FC = () => {
               <span className="text-xs uppercase tracking-wider font-mono text-amber-400 bg-slate-800/80 px-2.5 py-0.5 rounded-md">
                 Painel {currentRole.toUpperCase()} · {currentBusiness?.tradeName || 'Studio'}
               </span>
-              <span className="text-xs text-slate-400">· Hoje, 15 de Outubro</span>
+              <span className="text-xs text-slate-400">
+                · Hoje, {new Date().toLocaleDateString('pt-BR', { day: 'numeric', month: 'long' })}
+              </span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
               {currentRole === 'ceo'
@@ -101,6 +108,17 @@ export const ExecutiveDashboard: React.FC = () => {
 
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
             <button
+              onClick={() => setDashboardView(dashboardView === 'relatorios' ? 'operacional' : 'relatorios')}
+              className={`px-4 py-2.5 rounded-xl text-xs font-bold transition-all cursor-pointer flex items-center gap-2 ${
+                dashboardView === 'relatorios'
+                  ? 'bg-slate-800 text-white hover:bg-slate-700 border border-slate-700'
+                  : 'bg-emerald-500 hover:bg-emerald-600 text-white shadow-sm'
+              }`}
+            >
+              <BarChart3 className="w-4 h-4" />
+              <span>{dashboardView === 'relatorios' ? 'Ver Fila Operacional' : 'Aba de Relatórios & Gráficos'}</span>
+            </button>
+            <button
               onClick={() => setIsNewAppointmentModalOpen(true)}
               className="px-4 py-2.5 bg-white text-slate-900 hover:bg-slate-100 rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer flex items-center gap-2"
             >
@@ -118,6 +136,42 @@ export const ExecutiveDashboard: React.FC = () => {
         </div>
       </div>
 
+      {/* Navigation Switcher: Visão Operacional vs Relatórios & Gráficos */}
+      <div className="flex items-center gap-2 border-b border-slate-200 pb-2">
+        <button
+          onClick={() => setDashboardView('operacional')}
+          className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-2 ${
+            dashboardView === 'operacional'
+              ? 'bg-slate-900 text-white shadow-xs'
+              : 'bg-white text-slate-600 hover:text-slate-900 border border-slate-200'
+          }`}
+        >
+          <Clock className="w-4 h-4" />
+          <span>Visão Operacional & Fila</span>
+        </button>
+
+        <button
+          onClick={() => setDashboardView('relatorios')}
+          className={`px-4 py-2.5 rounded-xl text-xs sm:text-sm font-bold transition-all cursor-pointer flex items-center gap-2 ${
+            dashboardView === 'relatorios'
+              ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
+              : 'bg-white text-slate-600 hover:text-slate-900 border border-slate-200'
+          }`}
+        >
+          <BarChart3 className="w-4 h-4 text-emerald-500" />
+          <span>Relatórios & Gráficos (Recharts)</span>
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-bold">
+            Vendas & Ocupação
+          </span>
+        </button>
+      </div>
+
+      {/* View Content: Relatórios vs Operacional */}
+      {dashboardView === 'relatorios' ? (
+        <ReportsManager />
+      ) : (
+        <>
+
       {/* Resumo de Indicadores: Total de Agendamentos, Receita Mensal, Taxa de Ocupação e Novos Clientes */}
       <IndicatorSummary
         appointments={activeAppointments}
@@ -129,7 +183,11 @@ export const ExecutiveDashboard: React.FC = () => {
         currentBusiness={currentBusiness}
         onNavigateTab={(tab) => setActiveTab(tab)}
         onOpenNewAppointment={() => setIsNewAppointmentModalOpen(true)}
+        onOpenReports={() => setDashboardView('relatorios')}
       />
+
+      {/* Componente de Metas Mensais: Meta de Faturamento & Barra de Progresso Comparativa Realizado vs Esperado */}
+      <MonthlyGoalCard onNavigateTab={setActiveTab} />
 
       {/* Dashboard Financeiro: Gráfico de Linha do Faturamento Semanal + Gráfico de Rosca de Distribuição de Pagamentos */}
       <FinancialDashboard
@@ -149,6 +207,16 @@ export const ExecutiveDashboard: React.FC = () => {
         tradeName={currentBusiness?.tradeName}
         onNewAppointment={() => setIsNewAppointmentModalOpen(true)}
         onNewComanda={() => setActiveTab('comandas')}
+      />
+
+      {/* Ranking Mensal: Top 5 Profissionais por Volume de Atendimentos & Top 5 Serviços Mais Procurados */}
+      <TopPerformersRanking
+        appointments={activeAppointments}
+        professionals={activeProfessionals}
+        services={activeServices}
+        comandas={activeComandas}
+        onNavigateTab={setActiveTab}
+        onOpenNewAppointment={() => setIsNewAppointmentModalOpen(true)}
       />
 
       {/* Main 2-Column Split: Active Operations & Service Highlights */}
@@ -372,6 +440,8 @@ export const ExecutiveDashboard: React.FC = () => {
           </div>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 };

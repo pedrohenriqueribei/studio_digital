@@ -31,6 +31,18 @@ export const NewStudioModal: React.FC = () => {
     if (type === 'clinica_estetica') accentColor = '#0d9488';
     if (type === 'barbearia') accentColor = '#b45309';
     if (type === 'salao_beleza') accentColor = '#db2777';
+ 
+    if (typeof window !== 'undefined') {
+      try {
+        Object.keys(localStorage).forEach((key) => {
+          if (key.startsWith('studiodigital_') && !key.includes('superAdminAuth')) {
+            localStorage.removeItem(key);
+          }
+        });
+      } catch (e) {
+        console.warn('Erro ao limpar localStorage:', e);
+      }
+    }
 
     await registerBusiness({
       name: name.trim(),

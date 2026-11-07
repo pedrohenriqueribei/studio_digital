@@ -25,11 +25,14 @@ import {
   CheckCircle2,
   CalendarDays,
   ExternalLink,
+  Edit2,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Client, ClientNote, ClientPreferences, Appointment } from '../../types';
 import { MaskedInput } from '../ui/MaskedInput';
+import { maskPhone } from '../../utils/masks';
 import { PRESET_CLIENT_TAGS, getClientTagConfig } from '../../utils/clientTags';
+import { findDuplicateClientByPhone } from '../../utils/clientValidation';
 
 interface ClientsManagerProps {
   isProfessionalView?: boolean;
@@ -105,7 +108,7 @@ export const ClientsManager: React.FC<ClientsManagerProps> = ({ isProfessionalVi
   // Filter & Search states
   const [searchTerm, setSearchTerm] = useState('');
   const [activeFilter, setActiveFilter] = useState<
-    'all' | 'my_clients' | 'tag_vip' | 'tag_novo' | 'tag_recorrente' | 'tag_debito' | 'allergies' | 'recurrent'
+    'all' | 'my_clients' | 'tag_vip' | 'tag_novo' | 'tag_recorrente' | 'tag_debito' | 'allergies' | 'recurrent' | 'a_completar'
   >('all');
   const [sortBy, setSortBy] = useState<'name_asc' | 'name_desc' | 'visits' | 'spent' | 'recent'>('name_asc');
 
@@ -135,6 +138,66 @@ export const ClientsManager: React.FC<ClientsManagerProps> = ({ isProfessionalVi
   const [customCutInput, setCustomCutInput] = useState('');
   const [customColorInput, setCustomColorInput] = useState('');
   const [customAllergyInput, setCustomAllergyInput] = useState('');
+
+  // Verificação em tempo real de telefone duplicado no cadastro de clientes
+  const newClientPhoneDuplicate = useMemo(() => {
+    if (!newFormData.phone) return null;
+    return findDuplicateClientByPhone(activeClients, newFormData.phone);
+  }, [newFormData.phone, activeClients]);
+
+  // Estado e formulário para Edição de Dados Básicos do Cliente
+  const [editingClient, setEditingClient] = useState<Client | null>(null);
+  const [editFormData, setEditFormData] = useState({
+    name: '',
+    phone: '',
+    email: '',
+    birthDay: '',
+    birthMonth: '',
+    preferredProfessionalId: '',
+  });
+
+  const handleOpenEditClient = (client: Client) => {
+    setEditingClient(client);
+    setEditFormData({
+      name: client.name || '',
+      phone: client.phone || '',
+      email: client.email || '',
+      birthDay: client.birthDay ? String(client.birthDay) : '',
+      birthMonth: client.birthMonth ? String(client.birthMonth) : '',
+      preferredProfessionalId: client.preferredProfessionalId || '',
+    });
+  };
+
+  const handleSaveEditClient = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingClient || !editFormData.name.trim() || !editFormData.phone.trim()) return;
+
+    const bDay = parseInt(editFormData.birthDay, 10);
+    const bMonth = parseInt(editFormData.birthMonth, 10);
+    const birthDateFormatted =
+      !isNaN(bDay) && !isNaN(bMonth)
+        ? `${String(bDay).padStart(2, '0')}/${String(bMonth).padStart(2, '0')}`
+        : editingClient.birthDateFormatted;
+
+    const updated: Client = {
+      ...editingClient,
+      name: editFormData.name.trim(),
+      phone: editFormData.phone.trim(),
+      email: editFormData.email.trim(),
+      birthDay: !isNaN(bDay) && bDay >= 1 && bDay <= 31 ? bDay : undefined,
+      birthMonth: !isNaN(bMonth) && bMonth >= 1 && bMonth <= 12 ? bMonth : undefined,
+      birthDateFormatted,
+      preferredProfessionalId: editFormData.preferredProfessionalId || undefined,
+      preferredProfessionalName:
+        activeProfessionals.find((p) => p.id === editFormData.preferredProfessionalId)?.name || undefined,
+    };
+
+    updateClient(updated);
+    if (selectedClientForDetails && selectedClientForDetails.id === updated.id) {
+      setSelectedClientForDetails(updated);
+    }
+    setEditingClient(null);
+  };
 
   // Preference editor inside Client Details Modal
   const [editPreferences, setEditPreferences] = useState<ClientPreferences>({});
@@ -210,14 +273,16 @@ export const ClientsManager: React.FC<ClientsManagerProps> = ({ isProfessionalVi
     let novo = 0;
     let recorrente = 0;
     let debito = 0;
+    let aCompletar = 0;
     activeClients.forEach((c) => {
       const tags = (c.tags || []).map((t) => t.toLowerCase());
       if (tags.some((t) => t === 'vip')) vip++;
       if (tags.some((t) => t === 'novo')) novo++;
       if (tags.some((t) => t === 'recorrente')) recorrente++;
       if (tags.some((t) => t.includes('débito') || t.includes('debito'))) debito++;
+      if (c.status === 'A Completar' || c.profileStatus === 'A Completar') aCompletar++;
     });
-    return { vip, novo, recorrente, debito };
+    return { vip, novo, recorrente, debito, aCompletar };
   }, [activeClients]);
 
   // Filter & Search logic
@@ -246,6 +311,8 @@ export const ClientsManager: React.FC<ClientsManagerProps> = ({ isProfessionalVi
           (a) => a.clientId === c.id && a.professionalId === currentProfessional.id
         );
       });
+    } else if (activeFilter === 'a_completar') {
+      result = result.filter((c) => c.status === 'A Completar' || c.profileStatus === 'A Completar');
     } else if (activeFilter === 'tag_vip') {
       result = result.filter((c) => (c.tags || []).some((t) => t.toLowerCase() === 'vip'));
     } else if (activeFilter === 'tag_novo') {
@@ -305,6 +372,13 @@ export const ClientsManager: React.FC<ClientsManagerProps> = ({ isProfessionalVi
       return;
     }
 
+    // Validação de unicidade de telefone
+    const duplicateClient = findDuplicateClientByPhone(activeClients, newFormData.phone);
+    if (duplicateClient) {
+      alert(`Não é possível cadastrar: O telefone informado já pertence ao cliente "${duplicateClient.name}". Por favor, utilize o cadastro existente ou insira outro número.`);
+      return;
+    }
+
     const birthD = parseInt(newFormData.birthDay, 10);
     const birthM = parseInt(newFormData.birthMonth, 10);
 
@@ -348,6 +422,8 @@ export const ClientsManager: React.FC<ClientsManagerProps> = ({ isProfessionalVi
       notes: newFormData.notes.trim() || undefined,
       preferences: initialPreferences,
       importantNotes: initialImportantNotes,
+      status: 'Completo',
+      profileStatus: 'Completo',
     });
 
     // Reset Form
@@ -375,6 +451,18 @@ export const ClientsManager: React.FC<ClientsManagerProps> = ({ isProfessionalVi
     if (createdClient) {
       handleOpenClientDetails(createdClient, 'preferencias');
     }
+  };
+
+  // Mark client profile as complete
+  const handleMarkProfileComplete = () => {
+    if (!currentSelectedClient) return;
+    const updated: Client = {
+      ...currentSelectedClient,
+      status: 'Completo',
+      profileStatus: 'Completo',
+    };
+    updateClient(updated);
+    setSelectedClientForDetails(updated);
   };
 
   // Save Preferences Handler
@@ -524,6 +612,18 @@ export const ClientsManager: React.FC<ClientsManagerProps> = ({ isProfessionalVi
             Todos ({activeClients.length})
           </button>
 
+          <button
+            onClick={() => setActiveFilter('a_completar')}
+            className={`px-2.5 py-1 rounded-lg font-bold text-xs transition-all flex items-center gap-1 cursor-pointer border ${
+              activeFilter === 'a_completar'
+                ? 'bg-amber-500 text-amber-950 border-amber-500 shadow-2xs ring-1 ring-amber-300 font-black'
+                : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+            }`}
+          >
+            <Clock className="w-3 h-3 text-amber-600" />
+            <span>A Completar ({tagCounts.aCompletar})</span>
+          </button>
+
           {/* Quick Tag Segmentation */}
           <button
             onClick={() => setActiveFilter('tag_vip')}
@@ -635,68 +735,96 @@ export const ClientsManager: React.FC<ClientsManagerProps> = ({ isProfessionalVi
               }`}
             >
               <div className="p-5 space-y-3.5">
-                {/* Header: Photo + Name + Tags + WhatsApp */}
-                <div className="flex items-start justify-between gap-3">
-                  <div className="flex items-center gap-3 min-w-0">
+                {/* Header: Photo + Name + WhatsApp Button below Name + Tags */}
+                <div className="flex items-start gap-3.5">
+                  <div className="relative shrink-0">
                     <img
                       src={client.photoURL || AVATAR_OPTIONS[0]}
-                      alt={client.name}
-                      className="w-12 h-12 rounded-xl object-cover border border-slate-200 shrink-0"
+                      alt={client.name || 'Cliente'}
+                      className="w-12 h-12 rounded-xl object-cover border border-slate-200 shadow-2xs"
                       onError={(e) => {
-                        (e.target as HTMLElement).style.display = 'none';
+                        (e.target as HTMLImageElement).src = AVATAR_OPTIONS[0];
                       }}
                     />
-                    <div className="min-w-0">
-                      <h4 className="text-sm font-bold text-slate-900 truncate">
-                        {client.name}
-                      </h4>
-
-                      {/* Tags Badges */}
-                      {client.tags && client.tags.length > 0 && (
-                        <div className="flex items-center gap-1 flex-wrap mt-1">
-                          {client.tags.map((t) => {
-                            const config = getClientTagConfig(t);
-                            const TagIcon = config.icon;
-                            return (
-                              <span
-                                key={t}
-                                className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] border shadow-2xs ${config.badgeClass}`}
-                                title={config.description}
-                              >
-                                <TagIcon className="w-2.5 h-2.5 shrink-0" />
-                                <span>{config.label}</span>
-                              </span>
-                            );
-                          })}
-                        </div>
-                      )}
-
-                      {client.birthDateFormatted && (
-                        <span className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
-                          <Calendar className="w-3 h-3 text-slate-400" />
-                          <span>Aniversário: {client.birthDateFormatted}</span>
-                        </span>
-                      )}
-                    </div>
                   </div>
 
-                  <a
-                    href={`https://wa.me/55${cleanPhone}`}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="flex items-center gap-1 px-2.5 py-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg text-[11px] font-bold transition-colors shrink-0 cursor-pointer"
-                    title="Conversar pelo WhatsApp"
-                  >
-                    <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
-                    <span>WhatsApp</span>
-                  </a>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <h4 className="text-base font-bold text-slate-900 leading-snug break-words">
+                        {client.name || 'Nome do Cliente'}
+                      </h4>
+
+                      {(client.status === 'A Completar' || client.profileStatus === 'A Completar') && (
+                        <span
+                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-100 text-amber-900 border border-amber-300 shadow-2xs"
+                          title="Perfil cadastrado via agendamento rápido. Ficha cadastral com status 'A Completar'."
+                        >
+                          <Clock className="w-2.5 h-2.5 text-amber-700" />
+                          <span>A Completar</span>
+                        </span>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => handleOpenEditClient(client)}
+                        className="p-1 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors ml-auto cursor-pointer"
+                        title="Editar dados cadastrais"
+                      >
+                        <Edit2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    {/* Botão colocado embaixo do nome */}
+                    <div className="mt-1.5 mb-2">
+                      <a
+                        href={cleanPhone ? `https://wa.me/55${cleanPhone}` : undefined}
+                        target="_blank"
+                        rel="noreferrer"
+                        onClick={(e) => {
+                          if (!cleanPhone) e.preventDefault();
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 border border-emerald-200 rounded-lg text-xs font-bold transition-colors cursor-pointer shadow-2xs"
+                        title="Conversar pelo WhatsApp"
+                      >
+                        <MessageCircle className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>WhatsApp</span>
+                      </a>
+                    </div>
+
+                    {/* Tags Badges */}
+                    {client.tags && client.tags.length > 0 && (
+                      <div className="flex items-center gap-1 flex-wrap mt-1">
+                        {client.tags.map((t) => {
+                          const config = getClientTagConfig(t);
+                          const TagIcon = config.icon;
+                          return (
+                            <span
+                              key={t}
+                              className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] border shadow-2xs ${config.badgeClass}`}
+                              title={config.description}
+                            >
+                              <TagIcon className="w-2.5 h-2.5 shrink-0" />
+                              <span>{config.label}</span>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {client.birthDateFormatted && (
+                      <span className="text-[11px] text-slate-400 flex items-center gap-1 mt-1">
+                        <Calendar className="w-3 h-3 text-slate-400" />
+                        <span>Aniversário: {client.birthDateFormatted}</span>
+                      </span>
+                    )}
+                  </div>
                 </div>
 
                 {/* Contact Info */}
                 <div className="space-y-1 text-xs text-slate-500">
                   <div className="flex items-center gap-2">
                     <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                    <span>{client.phone}</span>
+                    <span>{maskPhone(client.phone) || 'Sem telefone'}</span>
                   </div>
                   {client.email && (
                     <div className="flex items-center gap-2">
@@ -859,6 +987,133 @@ export const ClientsManager: React.FC<ClientsManagerProps> = ({ isProfessionalVi
       )}
 
       {/* ========================================================================= */}
+      {/* MODAL: EDIÇÃO DE DADOS BÁSICOS DO CLIENTE COM MÁSCARA TELEFÔNICA         */}
+      {/* ========================================================================= */}
+      {editingClient && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-lg my-8 overflow-hidden animate-in fade-in zoom-in-95 duration-150 flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/80 shrink-0">
+              <div>
+                <span className="text-[10px] font-bold uppercase tracking-wider text-amber-600">
+                  Editar Cadastro
+                </span>
+                <h3 className="text-base font-bold text-slate-900">
+                  Atualizar Dados do Cliente
+                </h3>
+              </div>
+              <button
+                onClick={() => setEditingClient(null)}
+                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
+                aria-label="Fechar modal"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveEditClient} className="p-6 space-y-4">
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Nome Completo *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editFormData.name}
+                  onChange={(e) => setEditFormData({ ...editFormData, name: e.target.value })}
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-slate-500 bg-white"
+                />
+              </div>
+
+              <div>
+                <MaskedInput
+                  maskType="phone"
+                  label="Telefone / WhatsApp *"
+                  required
+                  value={editFormData.phone}
+                  leftIcon={<Phone className="w-3.5 h-3.5" />}
+                  onValueChange={(cleanVal) => setEditFormData({ ...editFormData, phone: cleanVal })}
+                  helperText="Formatação automática com DDD"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  E-mail (opcional)
+                </label>
+                <input
+                  type="email"
+                  value={editFormData.email}
+                  onChange={(e) => setEditFormData({ ...editFormData, email: e.target.value })}
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-slate-500 bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Data de Nascimento (Dia / Mês)
+                </label>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="number"
+                    min={1}
+                    max={31}
+                    placeholder="Dia (1-31)"
+                    value={editFormData.birthDay}
+                    onChange={(e) => setEditFormData({ ...editFormData, birthDay: e.target.value })}
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-slate-500 bg-white font-mono"
+                  />
+                  <input
+                    type="number"
+                    min={1}
+                    max={12}
+                    placeholder="Mês (1-12)"
+                    value={editFormData.birthMonth}
+                    onChange={(e) => setEditFormData({ ...editFormData, birthMonth: e.target.value })}
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-slate-500 bg-white font-mono"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Especialista de Preferência
+                </label>
+                <select
+                  value={editFormData.preferredProfessionalId}
+                  onChange={(e) => setEditFormData({ ...editFormData, preferredProfessionalId: e.target.value })}
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-slate-500 bg-white"
+                >
+                  <option value="">Nenhum (qualquer profissional)</option>
+                  {activeProfessionals.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="pt-3 border-t border-slate-100 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingClient(null)}
+                  className="px-4 py-2 border border-slate-200 hover:bg-slate-100 text-slate-700 rounded-xl text-xs font-semibold transition-colors cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <Check className="w-3.5 h-3.5 text-emerald-400" />
+                  <span>Salvar Alterações</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
       {/* MODAL 1: CADASTRO DE NOVO CLIENTE (COM PREFERÊNCIAS E ALERGIAS)            */}
       {/* ========================================================================= */}
       {isNewClientModalOpen && (
@@ -907,15 +1162,28 @@ export const ClientsManager: React.FC<ClientsManagerProps> = ({ isProfessionalVi
                     />
                   </div>
 
-                  <MaskedInput
-                    maskType="phone"
-                    label="Telefone / WhatsApp *"
-                    required
-                    value={newFormData.phone}
-                    leftIcon={<Phone className="w-3.5 h-3.5" />}
-                    onValueChange={(cleanVal) => setNewFormData({ ...newFormData, phone: cleanVal })}
-                    helperText="Formatação automática com DDD"
-                  />
+                  <div className="space-y-1.5">
+                    <MaskedInput
+                      maskType="phone"
+                      label="Telefone / WhatsApp *"
+                      required
+                      value={newFormData.phone}
+                      leftIcon={<Phone className="w-3.5 h-3.5" />}
+                      onValueChange={(cleanVal) => setNewFormData({ ...newFormData, phone: cleanVal })}
+                      helperText="Formatação automática com DDD"
+                    />
+                    {newClientPhoneDuplicate && (
+                      <div className="p-2.5 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-950 flex items-start gap-2 animate-in fade-in">
+                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                        <div>
+                          <p className="font-bold text-amber-950">Telefone já cadastrado!</p>
+                          <p className="text-[11px] text-amber-900 mt-0.5">
+                            Este número já pertence ao cliente <strong>{newClientPhoneDuplicate.name}</strong>.
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1339,6 +1607,19 @@ export const ClientsManager: React.FC<ClientsManagerProps> = ({ isProfessionalVi
                           </span>
                         );
                       })}
+
+                      {/* Status do Perfil */}
+                      {(currentSelectedClient?.status === 'A Completar' || currentSelectedClient?.profileStatus === 'A Completar') ? (
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-400 text-amber-950 font-black flex items-center gap-1 shadow-xs">
+                          <Clock className="w-2.5 h-2.5" />
+                          <span>Perfil: A Completar</span>
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                          <Check className="w-2.5 h-2.5" />
+                          <span>Perfil Completo</span>
+                        </span>
+                      )}
                     </div>
                     <h3 className="text-xl font-extrabold text-white">
                       {selectedClientForDetails.name}
@@ -1346,7 +1627,7 @@ export const ClientsManager: React.FC<ClientsManagerProps> = ({ isProfessionalVi
                     <div className="flex flex-wrap items-center gap-3 text-xs text-slate-300 mt-1">
                       <span className="flex items-center gap-1">
                         <Phone className="w-3.5 h-3.5 text-slate-400" />
-                        {selectedClientForDetails.phone}
+                        <span className="font-mono">{maskPhone(selectedClientForDetails.phone) || 'Sem telefone'}</span>
                       </span>
                       {selectedClientForDetails.email && (
                         <span className="flex items-center gap-1">
@@ -1359,6 +1640,26 @@ export const ClientsManager: React.FC<ClientsManagerProps> = ({ isProfessionalVi
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleOpenEditClient(currentSelectedClient || selectedClientForDetails)}
+                    className="px-2.5 py-1.5 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition-colors inline-flex items-center gap-1.5 shadow-xs cursor-pointer"
+                    title="Editar informações cadastrais"
+                  >
+                    <Edit2 className="w-3.5 h-3.5 text-slate-300" />
+                    <span>Editar</span>
+                  </button>
+                  {(currentSelectedClient?.status === 'A Completar' || currentSelectedClient?.profileStatus === 'A Completar') && (
+                    <button
+                      type="button"
+                      onClick={handleMarkProfileComplete}
+                      className="px-2.5 py-1.5 bg-amber-400 hover:bg-amber-300 text-amber-950 rounded-xl text-xs font-bold transition-colors inline-flex items-center gap-1 shadow-sm cursor-pointer"
+                      title="Marcar cadastro como Completo"
+                    >
+                      <Check className="w-3.5 h-3.5" />
+                      <span>Concluir Cadastro</span>
+                    </button>
+                  )}
                   <a
                     href={`https://wa.me/55${selectedClientForDetails.phone.replace(/\D/g, '')}`}
                     target="_blank"

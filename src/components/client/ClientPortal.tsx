@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import {
   Calendar,
   Clock,
@@ -26,10 +26,53 @@ import {
   Scissors,
   Check,
   Star,
+  Upload,
+  Image as ImageIcon,
+  RefreshCw,
+  Trash2,
+  Link2,
+  FlipHorizontal,
+  X,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Appointment, Service, Professional, Business, AppointmentStatus } from '../../types';
 import { formatCurrency } from '../../utils/availability';
+import { maskPhone } from '../../utils/masks';
+import { ServiceSearchAutocomplete } from '../services/ServiceSearchAutocomplete';
+
+// Helper to compress and center-crop avatar image into a 500x500 square data URL
+const compressAndResizeImage = (fileOrBlob: Blob, maxSize = 500, quality = 0.85): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('Erro ao carregar o arquivo da imagem.'));
+    reader.onload = () => {
+      const img = new Image();
+      img.onerror = () => reject(new Error('Não foi possível ler a imagem selecionada.'));
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const minSide = Math.min(img.width, img.height);
+        const startX = (img.width - minSide) / 2;
+        const startY = (img.height - minSide) / 2;
+
+        const targetSize = Math.min(maxSize, minSide);
+        canvas.width = targetSize;
+        canvas.height = targetSize;
+
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          resolve(reader.result as string);
+          return;
+        }
+
+        ctx.drawImage(img, startX, startY, minSide, minSide, 0, 0, targetSize, targetSize);
+        const dataUrl = canvas.toDataURL('image/jpeg', quality);
+        resolve(dataUrl);
+      };
+      img.src = reader.result as string;
+    };
+    reader.readAsDataURL(fileOrBlob);
+  });
+};
 
 type ClientTab = 'dashboard' | 'agendamentos' | 'novo' | 'historico' | 'perfil' | 'notificacoes';
 
@@ -70,12 +113,25 @@ export const ClientPortal: React.FC = () => {
 
   // Profile Edit State
   const [profileName, setProfileName] = useState(currentClient?.name || '');
-  const [profilePhone, setProfilePhone] = useState(currentClient?.phone || '');
+  const [profilePhone, setProfilePhone] = useState(currentClient?.phone ? maskPhone(currentClient.phone) : '');
   const [profilePhoto, setProfilePhoto] = useState(currentClient?.photoURL || '');
   const [profileBirthDay, setProfileBirthDay] = useState(currentClient?.birthDay || 1);
   const [profileBirthMonth, setProfileBirthMonth] = useState(currentClient?.birthMonth || 1);
   const [isSavingProfile, setIsSavingProfile] = useState(false);
   const [profileFeedback, setProfileFeedback] = useState<{ error?: string; success?: string } | null>(null);
+
+  // Profile Photo & Live Camera State
+  const [isCameraModalOpen, setIsCameraModalOpen] = useState(false);
+  const [cameraStream, setCameraStream] = useState<MediaStream | null>(null);
+  const [cameraFacingMode, setCameraFacingMode] = useState<'user' | 'environment'>('user');
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [isStartingCamera, setIsStartingCamera] = useState(false);
+  const [capturedImagePreview, setCapturedImagePreview] = useState<string | null>(null);
+  const [isAutoSavingPhoto, setIsAutoSavingPhoto] = useState(false);
+  const [showUrlInput, setShowUrlInput] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
 
   // New Booking Wizard State
   const [bookingStep, setBookingStep] = useState<1 | 2 | 3 | 4>(1);
@@ -158,6 +214,197 @@ export const ClientPortal: React.FC = () => {
       }
     } finally {
       setIsSavingProfile(false);
+    }
+  };
+
+  // Keep profile form fields synced when currentClient changes
+  useEffect(() => {
+    if (currentClient) {
+      setProfileName(currentClient.name || '');
+      setProfilePhone(currentClient.phone ? maskPhone(currentClient.phone) : '');
+      setProfilePhoto(currentClient.photoURL || '');
+      setProfileBirthDay(currentClient.birthDay || 1);
+      setProfileBirthMonth(currentClient.birthMonth || 1);
+    }
+  }, [currentClient]);
+
+  // Clean up camera stream
+  const stopCamera = useCallback(() => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((track) => track.stop());
+      setCameraStream(null);
+    }
+  }, [cameraStream]);
+
+  // Clean up camera on unmount
+  useEffect(() => {
+    return () => {
+      if (cameraStream) {
+        cameraStream.getTracks().forEach((track) => track.stop());
+      }
+    };
+  }, [cameraStream]);
+
+  // Attach camera stream to video element when stream is ready
+  useEffect(() => {
+    if (videoRef.current && cameraStream) {
+      videoRef.current.srcObject = cameraStream;
+      videoRef.current.play().catch(console.warn);
+    }
+  }, [cameraStream, isCameraModalOpen, capturedImagePreview]);
+
+  // Start device camera
+  const startCamera = async (facing: 'user' | 'environment' = cameraFacingMode) => {
+    if (cameraStream) {
+      cameraStream.getTracks().forEach((t) => t.stop());
+      setCameraStream(null);
+    }
+    setCameraError(null);
+    setCapturedImagePreview(null);
+    setIsStartingCamera(true);
+
+    try {
+      if (!navigator?.mediaDevices?.getUserMedia) {
+        throw new Error('Câmera não suportada neste navegador.');
+      }
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: facing,
+          width: { ideal: 640 },
+          height: { ideal: 640 },
+        },
+        audio: false,
+      });
+      setCameraStream(stream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream;
+        videoRef.current.play().catch(console.warn);
+      }
+    } catch (err: any) {
+      console.warn('Erro ao acessar câmera:', err);
+      let msg = 'Não foi possível acessar a câmera do dispositivo.';
+      if (err?.name === 'NotAllowedError' || err?.name === 'PermissionDeniedError') {
+        msg = 'Permissão de acesso à câmera negada. Habilite a permissão no seu navegador.';
+      } else if (err?.name === 'NotFoundError' || err?.name === 'DevicesNotFoundError') {
+        msg = 'Nenhuma câmera detectada neste aparelho.';
+      }
+      setCameraError(msg);
+    } finally {
+      setIsStartingCamera(false);
+    }
+  };
+
+  const handleOpenCameraModal = () => {
+    setIsCameraModalOpen(true);
+    setCapturedImagePreview(null);
+    startCamera(cameraFacingMode);
+  };
+
+  const handleCloseCameraModal = () => {
+    stopCamera();
+    setIsCameraModalOpen(false);
+    setCapturedImagePreview(null);
+    setCameraError(null);
+  };
+
+  const handleToggleFacingMode = () => {
+    const nextFacing = cameraFacingMode === 'user' ? 'environment' : 'user';
+    setCameraFacingMode(nextFacing);
+    startCamera(nextFacing);
+  };
+
+  const handleCaptureSnapshot = () => {
+    if (!videoRef.current) return;
+    const video = videoRef.current;
+    if (video.videoWidth === 0 || video.videoHeight === 0) return;
+
+    const canvas = document.createElement('canvas');
+    const minSide = Math.min(video.videoWidth, video.videoHeight);
+    const startX = (video.videoWidth - minSide) / 2;
+    const startY = (video.videoHeight - minSide) / 2;
+
+    const targetSize = 500;
+    canvas.width = targetSize;
+    canvas.height = targetSize;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    if (cameraFacingMode === 'user') {
+      ctx.translate(targetSize, 0);
+      ctx.scale(-1, 1);
+    }
+
+    ctx.drawImage(video, startX, startY, minSide, minSide, 0, 0, targetSize, targetSize);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+    setCapturedImagePreview(dataUrl);
+  };
+
+  // Automatically save captured photo to client profile
+  const handleApplyCapturedPhoto = async () => {
+    if (!capturedImagePreview) return;
+    setIsAutoSavingPhoto(true);
+    const photoToSave = capturedImagePreview;
+    setProfilePhoto(photoToSave);
+    handleCloseCameraModal();
+
+    try {
+      const ok = await updateClientProfile({ photoURL: photoToSave });
+      if (ok) {
+        setProfileFeedback({ success: 'Foto tirada com a câmera e salva automaticamente no perfil! ✨' });
+      } else {
+        setProfileFeedback({ error: 'Erro ao salvar a foto capturada no perfil.' });
+      }
+    } catch (e) {
+      console.error(e);
+      setProfileFeedback({ error: 'Falha ao salvar foto da câmera no perfil.' });
+    } finally {
+      setIsAutoSavingPhoto(false);
+    }
+  };
+
+  // Automatically save photo picked from gallery to client profile
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      setProfileFeedback({ error: 'Por favor, selecione um arquivo de imagem válido (JPG, PNG ou WebP).' });
+      return;
+    }
+
+    setIsAutoSavingPhoto(true);
+    setProfileFeedback(null);
+    try {
+      const compressedDataUrl = await compressAndResizeImage(file, 500, 0.85);
+      setProfilePhoto(compressedDataUrl);
+      const ok = await updateClientProfile({ photoURL: compressedDataUrl });
+      if (ok) {
+        setProfileFeedback({ success: 'Foto da galeria selecionada e salva automaticamente no seu perfil! ✨' });
+      } else {
+        setProfileFeedback({ error: 'Não foi possível salvar a foto no perfil.' });
+      }
+    } catch (err: any) {
+      setProfileFeedback({ error: err.message || 'Falha ao processar imagem da galeria.' });
+    } finally {
+      setIsAutoSavingPhoto(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  // Remove photo and update profile
+  const handleRemovePhoto = async () => {
+    setIsAutoSavingPhoto(true);
+    setProfilePhoto('');
+    try {
+      const ok = await updateClientProfile({ photoURL: '' });
+      if (ok) {
+        setProfileFeedback({ success: 'Foto de perfil removida com sucesso!' });
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsAutoSavingPhoto(false);
     }
   };
 
@@ -1065,87 +1312,63 @@ export const ClientPortal: React.FC = () => {
               </div>
             )}
 
-            {/* STEP 1: CHOOSE BUSINESS & SERVICE */}
+            {/* STEP 1: CHOOSE BUSINESS & SERVICE WITH AUTOCOMPLETE AND LOCATION */}
             {bookingStep === 1 && (
-              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 space-y-6">
-                {businesses.length > 1 && (
-                  <div className="space-y-2">
-                    <label className="text-xs font-semibold text-slate-300 block">
-                      Escolha a Unidade / Estabelecimento:
-                    </label>
-                    <select
-                      value={selectedBizId}
-                      onChange={(e) => {
-                        setSelectedBizId(e.target.value);
-                        setSelectedServiceId('');
-                        setSelectedProfessionalId('');
-                      }}
-                      className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500"
-                    >
-                      {businesses.map((b) => (
-                        <option key={b.id} value={b.id}>
-                          {b.tradeName || b.name} - {b.city || 'Brasil'}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                )}
-
-                <div className="space-y-3">
-                  <label className="text-xs font-semibold text-slate-300 block">
-                    Selecione o Serviço Desejado:
-                  </label>
-
-                  {availableServices.length === 0 ? (
-                    <div className="p-6 text-center text-xs text-slate-500 bg-slate-950 rounded-2xl border border-slate-800">
-                      Nenhum serviço ativo encontrado para esta unidade.
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                      {availableServices.map((srv) => {
-                        const isSelected = selectedServiceId === srv.id;
-                        return (
-                          <div
-                            key={srv.id}
-                            onClick={() => setSelectedServiceId(srv.id)}
-                            className={`p-4 rounded-2xl border transition-all cursor-pointer space-y-2 ${
-                              isSelected
-                                ? 'bg-emerald-950/40 border-emerald-500 shadow-md shadow-emerald-500/20'
-                                : 'bg-slate-950 border-slate-800 hover:border-slate-700'
-                            }`}
-                          >
-                            <div className="flex items-start justify-between">
-                              <h3 className="text-sm font-bold text-white">{srv.name}</h3>
-                              {isSelected && (
-                                <div className="w-5 h-5 rounded-full bg-emerald-500 text-slate-950 flex items-center justify-center">
-                                  <Check className="w-3 h-3 font-bold" />
-                                </div>
-                              )}
-                            </div>
-                            <p className="text-[11px] text-slate-400 line-clamp-2">
-                              {srv.description || 'Atendimento de alta qualidade.'}
-                            </p>
-                            <div className="flex items-center justify-between text-xs font-mono pt-1 border-t border-slate-800/80">
-                              <span className="text-slate-400">{srv.durationMinutes} min</span>
-                              <span className="text-emerald-400 font-bold">
-                                {formatCurrency(srv.price)}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+              <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-7 space-y-6 shadow-2xl">
+                <div>
+                  <h2 className="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-emerald-400" />
+                    <span>Localizar & Selecionar Serviço</span>
+                  </h2>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Pesquise serviços com busca inteligente por nome, categoria ou localize estabelecimentos e unidades mais próximos de você.
+                  </p>
                 </div>
 
-                <div className="flex justify-end pt-4 border-t border-slate-800">
+                <ServiceSearchAutocomplete
+                  services={services}
+                  businesses={businesses}
+                  selectedServiceId={selectedServiceId}
+                  selectedBusinessId={selectedBizId}
+                  onSelectService={(srv, biz) => {
+                    setSelectedServiceId(srv.id);
+                    if (biz && biz.id !== selectedBizId) {
+                      setSelectedBizId(biz.id);
+                      setSelectedProfessionalId(''); // Reseta profissional ao mudar de unidade
+                    }
+                    setBookingError('');
+                  }}
+                  onSelectBusiness={(bizId) => {
+                    setSelectedBizId(bizId);
+                    setSelectedProfessionalId('');
+                  }}
+                  clientLocation={currentClient}
+                  theme="dark"
+                  allowCrossBusinessSearch={true}
+                  showCategoryFilter={true}
+                  showLocationFilter={true}
+                  showServiceCardsGrid={true}
+                />
+
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-4 border-t border-slate-800">
+                  <div className="text-xs text-slate-400">
+                    {selectedServiceId ? (
+                      <span className="text-emerald-400 font-semibold flex items-center gap-1.5">
+                        <Check className="w-4 h-4" />
+                        Serviço selecionado. Pronto para escolher o profissional habilitado.
+                      </span>
+                    ) : (
+                      <span>Selecione um serviço desejado para avançar</span>
+                    )}
+                  </div>
+
                   <button
                     disabled={!selectedServiceId}
                     onClick={() => {
                       setBookingStep(2);
                       setBookingError('');
                     }}
-                    className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center gap-2"
+                    className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white font-bold text-xs rounded-xl transition-all cursor-pointer flex items-center justify-center gap-2 shadow-md shadow-emerald-600/20"
                   >
                     <span>Avançar para Profissional</span>
                     <ArrowRight className="w-4 h-4" />
@@ -1552,14 +1775,34 @@ export const ClientPortal: React.FC = () => {
             <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 sm:p-8 space-y-6 shadow-xl">
               {/* Photo & Role Badge */}
               <div className="flex items-center gap-4 pb-6 border-b border-slate-800">
-                <img
-                  src={
-                    profilePhoto ||
-                    'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&h=200&fit=crop&crop=face'
-                  }
-                  alt={profileName}
-                  className="w-16 h-16 rounded-2xl object-cover border-2 border-emerald-500"
-                />
+                <div className="relative group shrink-0">
+                  <img
+                    src={
+                      profilePhoto ||
+                      'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&h=200&fit=crop&crop=face'
+                    }
+                    alt={profileName}
+                    className="w-16 h-16 rounded-2xl object-cover border-2 border-emerald-500 shadow-md"
+                  />
+                  <div className="absolute inset-0 bg-slate-950/75 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1.5 backdrop-blur-[1px]">
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      title="Escolher da Galeria"
+                      className="p-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg transition-transform hover:scale-110 cursor-pointer"
+                    >
+                      <Upload className="w-3.5 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleOpenCameraModal}
+                      title="Tirar Foto com a Câmera"
+                      className="p-1.5 bg-teal-600 hover:bg-teal-500 text-white rounded-lg transition-transform hover:scale-110 cursor-pointer"
+                    >
+                      <Camera className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <h3 className="text-lg font-bold text-white">{currentClient?.name}</h3>
@@ -1593,8 +1836,9 @@ export const ClientPortal: React.FC = () => {
                     <input
                       type="tel"
                       value={profilePhone}
-                      onChange={(e) => setProfilePhone(e.target.value)}
-                      className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500"
+                      onChange={(e) => setProfilePhone(maskPhone(e.target.value))}
+                      placeholder="(11) 98765-4321"
+                      className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500 font-mono"
                     />
                   </div>
 
@@ -1632,17 +1876,140 @@ export const ClientPortal: React.FC = () => {
                   </div>
                 </div>
 
-                <div>
-                  <label className="text-xs font-semibold text-slate-300 block mb-1">
-                    URL da Foto de Perfil
-                  </label>
+                {/* DIV 3 (Targeted focused element): Foto de Perfil com Galeria e Câmera */}
+                <div className="space-y-3 bg-slate-950/70 border border-slate-800 rounded-2xl p-4 shadow-sm">
+                  <div className="flex items-center justify-between gap-2 flex-wrap">
+                    <div>
+                      <label className="text-xs font-bold text-white flex items-center gap-2">
+                        <span>Foto de Perfil</span>
+                        <span className="text-[10px] font-mono text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-md font-semibold">
+                          Automático
+                        </span>
+                      </label>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        Escolha uma foto da galeria ou use a câmera para salvar automaticamente no perfil.
+                      </p>
+                    </div>
+
+                    {isAutoSavingPhoto && (
+                      <span className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-300 bg-emerald-500/15 px-2.5 py-1 rounded-full border border-emerald-500/30 animate-pulse">
+                        <RefreshCw className="w-3 h-3 animate-spin text-emerald-400" />
+                        Salvando foto...
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Input invisível para galeria de fotos */}
                   <input
-                    type="url"
-                    value={profilePhoto}
-                    onChange={(e) => setProfilePhoto(e.target.value)}
-                    placeholder="https://exemplo.com/foto.jpg"
-                    className="w-full px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500"
+                    ref={fileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleFileSelect}
+                    className="hidden"
                   />
+
+                  <div className="flex flex-col sm:flex-row items-center gap-4 pt-1">
+                    {/* Visualização da foto atual */}
+                    <div className="relative group shrink-0">
+                      <img
+                        src={
+                          profilePhoto ||
+                          'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=200&h=200&fit=crop&crop=face'
+                        }
+                        alt="Foto do Perfil"
+                        className="w-20 h-20 rounded-2xl object-cover border-2 border-emerald-500/60 shadow-lg shadow-emerald-500/10"
+                      />
+                      <div className="absolute -bottom-1 -right-1 bg-emerald-500 text-slate-950 p-1 rounded-full shadow-md">
+                        <Check className="w-3 h-3 stroke-[3]" />
+                      </div>
+                    </div>
+
+                    {/* Botões de Ação: Galeria, Câmera e Opções */}
+                    <div className="flex-1 w-full space-y-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {/* Botão Escolher da Galeria */}
+                        <button
+                          type="button"
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={isAutoSavingPhoto}
+                          className="w-full px-3.5 py-2.5 bg-emerald-500/15 hover:bg-emerald-500/25 active:bg-emerald-500/30 border border-emerald-500/40 hover:border-emerald-500 text-emerald-300 font-semibold text-xs rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm disabled:opacity-50"
+                        >
+                          <Upload className="w-4 h-4 text-emerald-400" />
+                          <span>Escolher da Galeria</span>
+                        </button>
+
+                        {/* Botão Tirar Foto com Câmera */}
+                        <button
+                          type="button"
+                          onClick={handleOpenCameraModal}
+                          disabled={isAutoSavingPhoto}
+                          className="w-full px-3.5 py-2.5 bg-gradient-to-r from-teal-500/20 to-emerald-500/20 hover:from-teal-500/30 hover:to-emerald-500/30 active:from-teal-500/35 active:to-emerald-500/35 border border-teal-500/40 hover:border-teal-400 text-teal-200 font-semibold text-xs rounded-xl transition-all flex items-center justify-center gap-2 cursor-pointer shadow-sm disabled:opacity-50"
+                        >
+                          <Camera className="w-4 h-4 text-teal-400" />
+                          <span>Tirar Foto (Câmera)</span>
+                        </button>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-2 pt-1 text-[11px]">
+                        <button
+                          type="button"
+                          onClick={() => setShowUrlInput(!showUrlInput)}
+                          className="text-slate-400 hover:text-slate-200 flex items-center gap-1.5 transition-colors cursor-pointer"
+                        >
+                          <Link2 className="w-3.5 h-3.5" />
+                          <span>{showUrlInput ? 'Ocultar link manual' : 'Inserir link / URL da foto'}</span>
+                        </button>
+
+                        {profilePhoto && (
+                          <button
+                            type="button"
+                            onClick={handleRemovePhoto}
+                            disabled={isAutoSavingPhoto}
+                            className="text-rose-400 hover:text-rose-300 flex items-center gap-1 transition-colors cursor-pointer"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                            <span>Remover foto</span>
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Campo de link manual (se aberto) */}
+                  {showUrlInput && (
+                    <div className="pt-2 border-t border-slate-800/80 animate-in fade-in duration-200">
+                      <label className="text-[11px] font-medium text-slate-400 block mb-1">
+                        URL Direta da Foto (Web)
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          type="url"
+                          value={profilePhoto}
+                          onChange={(e) => setProfilePhoto(e.target.value)}
+                          placeholder="https://exemplo.com/sua-foto.jpg"
+                          className="flex-1 px-3 py-2 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white placeholder-slate-600 focus:outline-none focus:border-emerald-500"
+                        />
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (!profilePhoto.trim()) return;
+                            setIsAutoSavingPhoto(true);
+                            try {
+                              const ok = await updateClientProfile({ photoURL: profilePhoto.trim() });
+                              if (ok) {
+                                setProfileFeedback({ success: 'Foto de perfil atualizada pelo link com sucesso!' });
+                              }
+                            } finally {
+                              setIsAutoSavingPhoto(false);
+                            }
+                          }}
+                          className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-xs font-bold text-white rounded-xl cursor-pointer transition-colors shadow-sm"
+                        >
+                          Salvar Link
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex items-center justify-between pt-4 border-t border-slate-800">
@@ -2066,6 +2433,146 @@ export const ClientPortal: React.FC = () => {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Live Camera Capture Modal */}
+      {isCameraModalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 sm:p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between pb-3 border-b border-slate-800">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-xl">
+                  <Camera className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-bold text-white">Tirar Foto com a Câmera</h3>
+                  <p className="text-[11px] text-slate-400">
+                    Posicione o rosto no círculo e capture sua foto
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseCameraModal}
+                className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Viewfinder area */}
+            <div className="relative w-full aspect-square max-w-[320px] mx-auto rounded-3xl overflow-hidden bg-slate-950 border-2 border-emerald-500/40 shadow-inner flex items-center justify-center">
+              {capturedImagePreview ? (
+                <div className="relative w-full h-full">
+                  <img
+                    src={capturedImagePreview}
+                    alt="Foto capturada"
+                    className="w-full h-full object-cover"
+                  />
+                  <div className="absolute top-3 left-3 bg-emerald-500 text-slate-950 px-2.5 py-1 rounded-full text-[11px] font-bold flex items-center gap-1 shadow-md">
+                    <Check className="w-3.5 h-3.5 stroke-[3]" />
+                    <span>Foto capturada</span>
+                  </div>
+                </div>
+              ) : cameraError ? (
+                <div className="p-6 text-center space-y-3">
+                  <AlertCircle className="w-10 h-10 text-rose-400 mx-auto" />
+                  <p className="text-xs text-rose-300 font-medium">{cameraError}</p>
+                  <button
+                    type="button"
+                    onClick={() => startCamera(cameraFacingMode)}
+                    className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl cursor-pointer"
+                  >
+                    Tentar Novamente
+                  </button>
+                </div>
+              ) : isStartingCamera ? (
+                <div className="text-center space-y-2">
+                  <RefreshCw className="w-8 h-8 text-emerald-400 animate-spin mx-auto" />
+                  <p className="text-xs text-slate-400">Iniciando câmera...</p>
+                </div>
+              ) : (
+                <>
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className={`w-full h-full object-cover ${
+                      cameraFacingMode === 'user' ? '-scale-x-100' : ''
+                    }`}
+                  />
+                  {/* Subtle circular face guide */}
+                  <div className="absolute inset-0 pointer-events-none flex items-center justify-center">
+                    <div className="w-48 h-48 rounded-full border-2 border-dashed border-emerald-400/50 shadow-[0_0_25px_rgba(16,185,129,0.25)]" />
+                  </div>
+                </>
+              )}
+            </div>
+
+            {/* Modal actions */}
+            <div className="pt-2">
+              {capturedImagePreview ? (
+                <div className="flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCapturedImagePreview(null);
+                      startCamera(cameraFacingMode);
+                    }}
+                    className="flex-1 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold text-xs rounded-xl transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <RefreshCw className="w-3.5 h-3.5" />
+                    <span>Tirar Outra</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleApplyCapturedPhoto}
+                    disabled={isAutoSavingPhoto}
+                    className="flex-1 py-2.5 bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-400 hover:to-teal-400 text-slate-950 font-bold text-xs rounded-xl shadow-lg shadow-emerald-500/20 transition-all cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+                  >
+                    {isAutoSavingPhoto ? (
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Check className="w-4 h-4 stroke-[2.5]" />
+                    )}
+                    <span>Salvar no Perfil</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-center gap-4">
+                    {/* Toggle camera orientation if supported */}
+                    <button
+                      type="button"
+                      onClick={handleToggleFacingMode}
+                      className="p-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-full transition-colors cursor-pointer"
+                      title="Inverter câmera (frontal / traseira)"
+                    >
+                      <FlipHorizontal className="w-5 h-5" />
+                    </button>
+
+                    {/* Main Shutter Button */}
+                    <button
+                      type="button"
+                      onClick={handleCaptureSnapshot}
+                      disabled={!cameraStream || !!cameraError || isStartingCamera}
+                      className="w-16 h-16 rounded-full bg-emerald-500 hover:bg-emerald-400 disabled:opacity-40 text-slate-950 flex items-center justify-center shadow-lg shadow-emerald-500/30 ring-4 ring-emerald-500/30 hover:scale-105 active:scale-95 transition-all cursor-pointer"
+                      title="Capturar foto agora"
+                    >
+                      <Camera className="w-7 h-7" />
+                    </button>
+                  </div>
+
+                  <p className="text-[11px] text-center text-slate-400">
+                    Aponte a câmera e clique no botão verde para tirar a foto.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

@@ -32,6 +32,7 @@ import {
 import { useApp } from '../../context/AppContext';
 import { Business, BusinessType, Professional, SaaSPlan, Service, TenantStatus, UserRole } from '../../types';
 import { slugify } from '../../utils/slugify';
+import { maskPhone } from '../../utils/masks';
 import { SuperAdminClaimsManager } from './SuperAdminClaimsManager';
 
 export const SuperAdminDashboard: React.FC = () => {
@@ -63,7 +64,46 @@ export const SuperAdminDashboard: React.FC = () => {
     setIsSuperAdminView,
     appointments,
     navigateTo,
+    clearAllMockData,
   } = useApp();
+
+  const [isClearingMock, setIsClearingMock] = useState(false);
+  const [showClearConfirmModal, setShowClearConfirmModal] = useState(false);
+
+  const handleExecuteClearMock = async () => {
+    setIsClearingMock(true);
+    try {
+      // 1. Limpa Firestore de registros mock
+      await clearAllMockData();
+
+      // 2. Limpa completamente o localStorage
+      if (typeof window !== 'undefined') {
+        try {
+          const keysToRemove: string[] = [];
+          for (let i = 0; i < localStorage.length; i++) {
+            const key = localStorage.key(i);
+            if (key && key.startsWith('studiodigital_')) {
+              keysToRemove.push(key);
+            }
+          }
+          keysToRemove.forEach((k) => localStorage.removeItem(k));
+        } catch (e) {
+          console.warn('Erro ao limpar chaves do localStorage:', e);
+        }
+      }
+
+      setShowClearConfirmModal(false);
+      addNotification({
+        title: 'Dados Mock e LocalStorage Excluídos!',
+        message: 'A base foi zerada com sucesso. Novos cadastros iniciam 100% zerados.',
+        type: 'system',
+      });
+    } catch (err: any) {
+      console.error('Erro ao excluir dados mock:', err);
+    } finally {
+      setIsClearingMock(false);
+    }
+  };
 
   // Tenant filters and search
   const [tenantSearch, setTenantSearch] = useState('');
@@ -333,6 +373,15 @@ export const SuperAdminDashboard: React.FC = () => {
 
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
             <button
+              onClick={() => setShowClearConfirmModal(true)}
+              className="px-4 py-2.5 bg-rose-600/90 hover:bg-rose-600 text-white rounded-xl text-xs font-bold shadow-xs transition-all cursor-pointer flex items-center gap-2"
+              title="Excluir todos os registros demonstrativos do banco e limpar o localStorage"
+            >
+              <Trash2 className="w-4 h-4 text-white" />
+              <span>Excluir Mock & LocalStorage</span>
+            </button>
+
+            <button
               onClick={() => setIsNewStudioModalOpen(true)}
               className="px-4 py-2.5 bg-white text-slate-900 hover:bg-slate-100 rounded-xl text-xs font-bold shadow-sm transition-all cursor-pointer flex items-center gap-2"
             >
@@ -551,7 +600,7 @@ export const SuperAdminDashboard: React.FC = () => {
 
                         <td className="py-3.5 px-4 text-slate-600">
                           <div>{b.city} - {b.state}</div>
-                          <div className="text-[11px] text-slate-400">{b.phone}</div>
+                          <div className="text-[11px] text-slate-400 font-mono">{b.phone ? maskPhone(b.phone) : 'Sem telefone'}</div>
                           {b.managerEmail && (
                             <div className="text-[11px] text-indigo-600 font-medium truncate max-w-[180px]" title={`Gerente: ${b.managerName || ''} (${b.managerEmail})`}>
                               👤 {b.managerName || b.managerEmail}
@@ -751,8 +800,8 @@ export const SuperAdminDashboard: React.FC = () => {
                               <span className="font-bold text-slate-900 block truncate">
                                 {pro.name}
                               </span>
-                              <span className="text-[11px] text-slate-400 block truncate">
-                                {pro.email} · {pro.phone}
+                              <span className="text-[11px] text-slate-400 block truncate font-mono">
+                                {pro.email} · {pro.phone ? maskPhone(pro.phone) : 'Sem telefone'}
                               </span>
                             </div>
                           </div>
@@ -1466,11 +1515,12 @@ export const SuperAdminDashboard: React.FC = () => {
                   </label>
                   <input
                     type="text"
+                    placeholder="(11) 98765-4321"
                     value={tenantFormData.phone || ''}
                     onChange={(e) =>
-                      setTenantFormData({ ...tenantFormData, phone: e.target.value })
+                      setTenantFormData({ ...tenantFormData, phone: maskPhone(e.target.value) })
                     }
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500"
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 font-mono"
                   />
                 </div>
               </div>
@@ -1661,8 +1711,8 @@ export const SuperAdminDashboard: React.FC = () => {
                     required
                     placeholder="(11) 98765-4321"
                     value={proFormData.phone}
-                    onChange={(e) => setProFormData({ ...proFormData, phone: e.target.value })}
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500"
+                    onChange={(e) => setProFormData({ ...proFormData, phone: maskPhone(e.target.value) })}
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 font-mono"
                   />
                 </div>
                 <div>
@@ -2190,6 +2240,52 @@ export const SuperAdminDashboard: React.FC = () => {
                 className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold cursor-pointer"
               >
                 Confirmar Exclusão
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL CEO: CONFIRMAÇÃO DE LIMPEZA DE DADOS MOCK E LOCAL STORAGE */}
+      {showClearConfirmModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md p-6">
+            <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mb-4">
+              <Trash2 className="w-6 h-6" />
+            </div>
+
+            <h3 className="text-base font-bold text-slate-900 mb-1">
+              Excluir Todos os Dados de Mock e Limpar LocalStorage?
+            </h3>
+            <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+              Esta ação removerá do Firestore e do armazenamento local todos os clientes, agendamentos, comandas e estabelecimentos demonstrativos.
+              <br /><br />
+              <strong className="text-slate-800">Garantia:</strong> Quando um novo usuário iniciar o teste gratuito, começará com o ambiente 100% zerado e sem dados fictícios.
+            </p>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                disabled={isClearingMock}
+                onClick={() => setShowClearConfirmModal(false)}
+                className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-xl text-xs font-semibold cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isClearingMock}
+                onClick={handleExecuteClearMock}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold cursor-pointer flex items-center gap-1.5"
+              >
+                {isClearingMock ? (
+                  <span>Limpando dados...</span>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>Confirmar e Zerar Base</span>
+                  </>
+                )}
               </button>
             </div>
           </div>

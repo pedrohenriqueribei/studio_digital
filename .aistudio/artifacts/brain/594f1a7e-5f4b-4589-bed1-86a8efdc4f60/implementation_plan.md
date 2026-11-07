@@ -1,158 +1,122 @@
-# Sistema Completo de Clientes no Studio Digital
+# Plano de Implementação: Fila Virtual Inteligente e Gestão de Encaixes
 
-Implementação completa de cadastro, autenticação, gerenciamento de perfil e portal exclusivo para usuários do tipo **Cliente** na plataforma web Studio Digital, totalmente integrado ao sistema de autenticação e aos papéis existentes: **Profissional**, **Gerente** e **CEO (Super Admin)**.
-
----
-
-## 1. Cadastro e Autenticação de Clientes
-
-- **Página de Cadastro Pública** (`/cadastro` e `/cadastro-cliente`):
-  - Componente: `src/components/auth/ClientSignupPage.tsx`
-  - Campos solicitados e validados:
-    - Nome completo (`name`)
-    - E-mail (`email`) com validação de formato e unicidade no sistema e no Firebase Firestore
-    - Telefone / WhatsApp com máscara dinâmica `(XX) XXXXX-XXXX`
-    - Data de nascimento restrita a Dia (1-31) e Mês (1-12)
-    - Foto de perfil (seleção rápida entre avatares pré-definidos de alta resolução ou URL personalizada)
-    - Senha (mínimo de 6 caracteres) e confirmação de senha idêntica
-  - Atribuição automática e estrita do perfil `client` (o usuário não escolhe nem altera seu próprio perfil).
-  - Suporte a autenticação direta com conta Google via `signInWithPopup(auth, googleProvider)`.
-  - Link direto de redirecionamento para login de clientes existentes.
-
-- **Login e Logout Seguros**:
-  - `src/components/auth/UnifiedLoginPage.tsx`: Aba dedicada **Cliente** com preenchimento de demonstração, indicação de perfil e recuperação de senha.
-  - Funções no `AppContext`: `loginClient(email, pass)`, `registerClient(data)`, `logoutClient()`.
-  - Redirecionamento automático pós-login para `/app/cliente`.
-
-- **Recuperação de Senha**:
-  - `sendPasswordReset(email)` via Firebase Auth `sendPasswordResetEmail(auth, email)` com identificação do perfil de cliente.
+Este plano especifica a arquitetura, regras de negócio e interface para o sistema dinâmico e inteligente de **Fila Virtual**, atendendo à demanda de clientes presenciais sem agendamento prévio (walk-ins/encaixes) em harmonia com a grade de clientes previamente agendados, com suporte a painel de chamada na TV e faturamento automático.
 
 ---
 
-## 2. Área Exclusiva do Cliente (`/app/cliente`)
+## 1. Visão Geral e Casos de Uso
 
-Componente: `src/components/client/ClientPortal.tsx`
-
-- **Dashboard**:
-  - Card de boas-vindas personalizado com foto e nome do cliente.
-  - Destaque do próximo agendamento (serviço, profissional, data, horário, valor e unidade).
-  - Métricas e indicadores pessoais: reservas ativas, atendimentos concluídos e total investido em cuidados.
-  - Atalhos rápidos para *"Fazer Novo Agendamento"*, *"Meus Agendamentos"*, *"Meu Perfil"* e *"Histórico"*.
-  - Grade de histórico recente com atalho para detalhes.
-
-- **Meus Agendamentos**:
-  - Filtros interativos: *Todos*, *Agendados*, *Concluídos* e *Cancelados*.
-  - Cards detalhados com data, horário de início e término, duração em minutos, preço formatado em BRL e status.
-  - Modal de detalhes completos da reserva.
-  - Modal de cancelamento de agendamento com solicitação opcional de motivo, validação de propriedade e sincronização no Firestore.
-
-- **Novo Agendamento (Fluxo em 4 Etapas)**:
-  - **Passo 1**: Seleção da unidade (se houver múltiplos studios) e catálogo de serviços ativos com preços e duração.
-  - **Passo 2**: Seleção de profissional habilitado para o serviço escolhido.
-  - **Passo 3**: Escolha de data e grade de horários livres gerados dinamicamente com base na jornada do profissional, duração do serviço e verificação em tempo real de conflitos via `checkAppointmentConflict`.
-  - **Passo 4**: Confirmação instantânea da reserva com geração de agendamento associado ao ID do cliente, atualização de visitas e criação de comanda no financeiro.
-
-- **Meu Perfil**:
-  - Visualização e edição do nome completo, telefone/WhatsApp, dia e mês de nascimento e URL da foto.
-  - Indicador do perfil ativo `client` e link para redefinição de senha por e-mail.
-
-- **Histórico de Atendimentos**:
-  - Consulta aos serviços já realizados anteriormente com recibo detalhado.
-
-- **Notificações**:
-  - Central de avisos sobre confirmações, alterações e cancelamentos de agendamentos.
+1. **Cliente Presencial (Walk-in)**: Chega ao estúdio/clínica sem horário marcado. A recepção gera uma senha na fila virtual selecionando o serviço desejado e o profissional (específico ou "Qualquer disponível").
+2. **Prioridade Garantida para Agendados**: O motor inteligente calcula as janelas vagas (gaps) na grade dos profissionais para hoje, impedindo que encaixes atrasem clientes que possuem agendamento prévio.
+3. **Painel de Recepção / TV**: Uma visualização pública em tela cheia com visual moderno e de alto contraste, chamada sonora de senha (chime sintetizado via Web Audio API), destaque do profissional/bancada e lista de próximas senhas.
+4. **Faturamento & Comandas Automáticas**: Ao iniciar o atendimento da senha, uma comanda é automaticamente gerada e vinculada ao profissional e ao serviço. O faturamento e o histórico de comissões alimentam instantaneamente o módulo financeiro e relatórios executivos.
 
 ---
 
-## 3. Regras de Agendamento e Conflitos
+## 2. Estrutura de Dados e Tipos (`src/types/index.ts`)
 
-- Apenas serviços ativos e profissionais cadastrados/habilitados para o serviço são disponibilizados.
-- Validação de disponibilidade com bloqueio de horários passados no dia corrente.
-- Prevenção de sobreposições de agenda via `checkAppointmentConflict`:
-  - Impede múltiplos agendamentos para o mesmo profissional no mesmo horário.
-  - Impede que o mesmo cliente agende dois atendimentos concomitantes com profissionais diferentes.
-- Cada agendamento fica associado a `currentClient.id` e aos dados cadastrais verificados.
-- O cliente visualiza e cancela exclusivamente seus próprios agendamentos.
+```typescript
+export type VirtualQueueStatus = 
+  | 'aguardando'      // Na fila aguardando chamada
+  | 'chamado'         // Chamado no painel / TV (aguardando sentar na cadeira)
+  | 'em_atendimento'  // Em procedimento ativo (comanda gerada)
+  | 'concluido'       // Atendimento finalizado
+  | 'desistiu'        // Cancelado/desistiu
+  | 'cancelado';
 
----
-
-## 4. Controle de Acesso Baseado em Papéis (RBAC)
-
-- **Cliente (`client`)**:
-  - Acesso estrito a `/app/cliente/*`, `/p/*`, `/nossos-planos`, `/cadastro`.
-  - Bloqueio rígido com tela 403 Forbidden caso tente acessar rotas gerenciais ou administrativas (`/admin/*`, `/app/gerente/*`, `/app/profissional/*`, `/dashboard/*`).
-- **Profissional (`professional`)**:
-  - Permissões mantidas para sua própria agenda em `/app/profissional/agenda`.
-- **Gerente (`tenant_manager`)**:
-  - Permissões mantidas para gestão do estúdio em `/app/gerente/*`.
-- **CEO / Super Admin (`super_admin`)**:
-  - Acesso global mantido em `/admin/painelmaster`.
-
----
-
-## 5. Sistema de Avaliação Pós-Atendimento (Reviews & Ratings)
-
-- **Modal Interativo de Avaliação**:
-  - Exibido nos agendamentos concluídos com status `completed` dentro de *"Histórico de Atendimentos"* e *"Meus Agendamentos"*.
-  - Avaliação por estrelas de 1 a 5 com destaque dinâmico ao passar o mouse e rótulos de satisfação (*Péssimo*, *Ruim*, *Regular*, *Bom*, *Excelente*).
-  - Campo opcional de comentário/depoimento com contador de caracteres (máx. 500).
-- **Banner de Atendimento Concluído sem Avaliação**:
-  - Destaque no Dashboard do Cliente avisando sobre agendamentos recentes aguardando avaliação, com botão de ação direta.
-- **Sincronização em Múltiplos Módulos**:
-  - `appointments`: Campos `rating`, `reviewComment`, `reviewedAt` gravados diretamente no agendamento.
-  - `reviews`: Coleção no Firestore com regras de segurança ativas em `firestore.rules`.
-  - `professionals`: Recálculo e sincronização automática da média ponderada `averageRating` e total de avaliações `totalReviews`.
-  - Exibição de notas e depoimentos em:
-    - Card do Agendamento e Modal de Detalhes no Portal do Cliente.
-    - Portal do Profissional (`/app/profissional/agenda`) com badge de média e comentários dos clientes nos atendimentos.
-    - Perfil Público do Profissional (`/p/[slug]`) com nota média e total de avaliações.
-    - Gestão de Profissionais (`/app/gerente/profissionais`) com estatísticas de avaliação da equipe.
+export interface VirtualQueueItem {
+  id: string;
+  businessId: string;
+  tenant_id: string;
+  ticketNumber: string;         // Ex: A001, B002, E003
+  clientId?: string;            // Opcional caso já seja cliente cadastrado
+  clientName: string;
+  clientPhone?: string;
+  serviceId: string;
+  serviceName: string;
+  serviceDuration: number;      // Em minutos
+  servicePrice: number;
+  professionalId?: string;      // Preenchido se escolheu profissional específico
+  professionalName?: string;
+  anyProfessional: boolean;     // True se aceita qualquer profissional disponível
+  assignedProfessionalId?: string; // Profissional que efetivamente atendeu
+  assignedProfessionalName?: string;
+  status: VirtualQueueStatus;
+  priorityAlert?: 'normal' | 'gap_curto' | 'proximo_de_agendamento';
+  estimatedWaitMinutes: number;
+  joinedAt: string;             // ISO
+  calledAt?: string;            // ISO
+  startedAt?: string;           // ISO
+  completedAt?: string;         // ISO
+  comandaId?: string;           // ID da comanda criada automaticamente
+  notes?: string;
+}
+```
 
 ---
 
----
+## 3. Motor Inteligente de Alocação e Prioridade
 
-## 6. Módulo de Gestão de Clientes & CRM para Profissionais
-
-- **Acesso Direto para Profissionais**:
-  - Aba e rota dedicada `/app/profissional/clientes` integrada sem bloqueio RBAC.
-  - Alternador de abas no Portal do Profissional (`Minha Agenda` ↔ `Gestão & Ficha de Clientes (CRM)`).
-  - Alerta visual imediato de alergias (`⚠️ Alergia: ...`) e atalho *"Ficha do Cliente"* em cada card de agendamento na agenda do profissional.
-
-- **Cadastro Completo de Novos Clientes**:
-  - Modal com validação de nome, telefone/WhatsApp com máscara `(XX) XXXXX-XXXX`, e-mail, aniversário (dia e mês), seleção de foto/avatar e especialista preferido.
-  - Registro de preferências iniciais (cortes, cores e alergias) e primeira nota importante.
-
-- **Ficha do Cliente & Histórico de Serviços Prestados**:
-  - **Histórico**: Listagem cronológica de serviços realizados com data, hora, profissional responsável, duração, valor pago em R$, status, notas de atendimento e estrelas/avaliação pós-atendimento.
-  - **Preferências**:
-    - **Tipos de Corte**: Tags interativas com sugestões inteligentes (Degradê navalhado, Fade, Pompadour, Long Bob, Camadas, Pixie, etc.) + tags personalizadas.
-    - **Cores de Preferência**: Sugestões e tags personalizadas (Castanho Iluminado, Loiro Pérola, Morena Iluminada, Platinado, Esmalte Nude, Vermelho Carmim, etc.).
-    - **Alergias e Sensibilidades**: Destaque de segurança com borda vermelha e tags de alerta (Amônia, Formaldeído, PPD, Pó Descolorante, Látex, Tolueno, etc.) com inserção rápida.
-    - **Preferências Gerais**: Notas de conforto e sensibilidade no atendimento.
-  - **Notas Importantes**: Linha do tempo com autor, data/hora e opção de *"Marcar como Alerta Crítico"*.
-
-- **Sistema de Tags & Segmentação Rápida**:
-  - Tags predefinidas com cores e ícones distintos:
-    - **VIP** (Dourado/Âmbar, estrela): clientes de alto ticket e prioridade.
-    - **Novo** (Azul/Céu, brilho): clientes recém-chegados ou primeiro atendimento.
-    - **Recorrente** (Verde esmeralda, repetição): clientes fidelizados e frequentes.
-    - **Com débito** (Vermelho/Rosa, alerta): clientes com pendência ou valor em aberto.
-  - Alternador tátil de 1 clique na Ficha do Cliente e seletor no cadastro de novos clientes.
-  - Possibilidade de criar tags personalizadas livremente pela equipe.
-  - Alerta em destaque no card do cliente quando marcado como "Com débito".
-  - Filtros rápidos na barra superior com contadores em tempo real para cada segmento (ex: `VIP (1)`, `Novo (1)`, `Recorrente (2)`, `Com débito (1)`).
-  - Exibição das etiquetas nos cards de agendamento na agenda diária do profissional.
+1. **Cálculo de Janelas Livres (Smart Gaps)**:
+   - Lê os agendamentos do dia em `appointments` para cada profissional.
+   - Identifica os intervalos livres entre um agendamento e o próximo.
+   - Para encaixes: se o serviço do walk-in leva 40 min e o próximo agendamento do profissional é em 25 min, o sistema emite um alerta visual inteligente para evitar atraso no agendado, sugerindo outro profissional com janela livre ou reordenando a fila.
+2. **Modo "Qualquer Profissional Disponível"**:
+   - Analisa quem realiza o serviço solicitado, quem está livre no momento ou quem tem a menor fila acumulada, sugerindo a melhor alocação para minimizar o tempo de espera geral.
 
 ---
 
-## 7. Estrutura de Arquivos Criados e Modificados
+## 4. Integração Financeira e Faturamento dos Profissionais
 
-- `src/types/index.ts`: Inclusão de `ClientTagPreset` e propriedade `tags?: string[]` em `Client`.
-- `src/utils/clientTags.ts`: Definição centralizada de estilos, cores, ícones e descrições para tags predefinidas e personalizadas.
-- `firebase-blueprint.json`: Atualização do esquema intermediário de `Client` com `tags`.
-- `src/context/AppContext.tsx`: Implementação de `updateClientTags`, `toggleClientTag` e sementes de tags reais no setup do estabelecimento.
-- `src/components/clients/ClientsManager.tsx`: Barra de segmentação rápida na Ficha do Cliente com alternância em 1 clique, badges coloridas nos cards, filtros por tag com contadores e seletor no modal de cadastro.
-- `src/components/professional/ProfessionalPortal.tsx`: Exibição visual de tags diretamente nos cards de agendamento do dia.
+- **Abertura Automática de Comanda**:
+  - Quando a recepção clica em **"Iniciar Atendimento"**, o sistema cria instantaneamente uma `Comanda` aberta com:
+    - `clientId` e `clientName` do cliente da fila.
+    - `professionalId` e `professionalName` do profissional designado.
+    - Item com `serviceId`, `name: serviceName`, `price: servicePrice`.
+    - `status: 'aberta'`.
+  - O `comandaId` é gravado no `VirtualQueueItem`.
+- **Fechamento e Comissões**:
+  - A comanda fica visível imediatamente na aba **Financeiro / Comandas**.
+  - No pagamento (Dinheiro, PIX, Cartão), o valor entra no faturamento do estúdio, e o rateio de comissão do profissional é computado automaticamente no ranking e relatórios (`FinancialDashboard`, `TopPerformersRanking`, `ExecutiveReportsTab`).
 
+---
 
+## 5. Componentes a Serem Desenvolvidos
+
+1. **`src/components/queue/VirtualQueueManager.tsx`**:
+   - Painel de controle da equipe e recepção:
+     - Métricas no topo: Total aguardando, Tempo médio estimado, Em atendimento no momento, Atendidos hoje.
+     - Botão de ação: **"Novo Encaixe / Gerar Senha"** e **"Abrir Painel TV"**.
+     - Abas / Colunas Kanban interativas:
+       - *Fila de Espera*: Cards ordenados com número da senha, tempo de espera, status de gap e botão "Chamar no Painel".
+       - *Chamados*: Senhas no painel com botão "Iniciar Atendimento" e "Rechamar (Som)".
+       - *Em Atendimento*: Card com tempo decorrido, profissional atendendo e atalho direto para a Comanda no Caixa.
+       - *Próximos Agendamentos*: Visão rápida dos horários agendados do dia para prevenir conflitos.
+2. **`src/components/queue/NewQueueTicketModal.tsx`**:
+   - Modal rápido para inserção na fila:
+     - Busca/seleção rápida de cliente (ou digitação de nome/telefone).
+     - Seleção do serviço (com duração e preço visíveis).
+     - Seleção do profissional ("Qualquer disponível" ou escolha direta).
+     - Cálculo preditivo imediato do tempo estimado de espera antes de confirmar.
+3. **`src/components/queue/ReceptionTVDisplay.tsx`**:
+   - Modo Fullscreen para TV ou monitor de recepção:
+     - Layout de alto impacto visual (dark mode premium com tipografia de destaque).
+     - Chamada atual com animação pulsante, número da senha, nome do cliente, serviço e nome do profissional / cadeira.
+     - Chime sonoro agradável (campainha sintetizada com Web Audio API sem necessidade de arquivos externos).
+     - Coluna lateral com "Últimas Senhas Chamadas" e "Próximas Senhas na Fila".
+     - Relógio digital em tempo real e logo do estúdio.
+4. **Sincronização em Tempo Real (`src/services/firestoreSync.ts`)**:
+   - Ouvinte `onSnapshot` da coleção `virtualQueue` para sincronizar instantaneamente as ações da recepção com a tela da TV.
+5. **Navegação & Header**:
+   - Inclusão do item **"Fila Virtual"** com ícone moderno no `Sidebar.tsx`, `MobileBottomNav.tsx` e atalho rápido no `Header.tsx`.
+
+---
+
+## 6. Plano de Execução Passo a Passo
+
+1. **Fase 1**: Atualizar tipos (`src/types/index.ts`) e adicionar rotinas de sincronização no Firestore (`src/services/firestoreSync.ts`).
+2. **Fase 2**: Integrar estado global no `AppContext.tsx` (`queueItems`, `addToQueue`, `callQueueTicket`, `startQueueAttendance`, `finishQueueAttendance`, `cancelQueueTicket`).
+3. **Fase 3**: Implementar `VirtualQueueManager.tsx` e `NewQueueTicketModal.tsx` com regras de conflito/prioridade com agendamentos.
+4. **Fase 4**: Criar `ReceptionTVDisplay.tsx` com efeito sonoro Web Audio e layout para TV.
+5. **Fase 5**: Integrar rotas no `App.tsx`, atualizar navegação (`Sidebar.tsx`, `Header.tsx`), testar fluxo completo (geração de senha -> chamada com som -> início com comanda automática -> fechamento no caixa).
+6. **Fase 6**: Validação rigorosa com `compile_applet` e `lint_applet`.

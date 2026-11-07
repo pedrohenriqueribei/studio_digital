@@ -102,7 +102,7 @@ export function getUserProfileLabel(profile: ResolvedUserProfile): string {
   }
 }
 
-export type BottomNavTabId = 'inicio' | 'agenda' | 'caixa' | 'comissoes' | 'clientes' | 'servicos' | 'profissionais' | 'configuracoes' | 'planos' | 'painelmaster';
+export type BottomNavTabId = 'inicio' | 'agenda' | 'caixa' | 'comissoes' | 'clientes' | 'servicos' | 'profissionais' | 'relatorios' | 'configuracoes' | 'planos' | 'painelmaster';
 
 /**
  * Retorna a rota exata permitida para cada perfil e botão da navegação.
@@ -244,6 +244,22 @@ export function getRoleBasedDestination(
         return { path: '/app/cliente/novo-agendamento', allowed: true };
       }
       return { path: '/nossos-planos', allowed: true };
+    }
+
+    case 'relatorios': {
+      if (profile === 'super_admin') {
+        return { path: '/admin/relatorios', tabState: 'relatorios', allowed: true };
+      }
+      if (profile === 'tenant_manager') {
+        return { path: '/app/gerente/relatorios', tabState: 'relatorios', allowed: true };
+      }
+      if (profile === 'professional') {
+        return { path: '/app/gerente/relatorios', tabState: 'relatorios', allowed: true };
+      }
+      if (profile === 'client') {
+        return { path: '/app/cliente', allowed: false, reason: 'Relatórios são restritos à administração do studio.' };
+      }
+      return { path: '/login', allowed: false };
     }
 
     case 'configuracoes': {

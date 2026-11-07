@@ -135,6 +135,8 @@
         "importantNotes": { "type": "array" },
         "preferredProfessionalId": { "type": "string" },
         "preferredProfessionalName": { "type": "string" },
+        "status": { "type": "string" },
+        "profileStatus": { "type": "string" },
         "createdAt": { "type": "string" },
         "updatedAt": { "type": "string" }
       },

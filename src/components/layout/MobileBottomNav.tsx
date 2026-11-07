@@ -21,6 +21,8 @@ import {
   Info,
   Clock,
   CheckCircle,
+  BarChart3,
+  Tv,
 } from 'lucide-react';
 import { useApp, AppTab, SuperAdminTab } from '../../context/AppContext';
 import { getTodayDateString } from '../../utils/date';
@@ -543,6 +545,19 @@ export const MobileBottomNav: React.FC = () => {
                     </button>
                   )}
 
+                  {/* Relatórios */}
+                  <button
+                    onClick={() => handleNavClick('relatorios')}
+                    className={`min-h-[50px] p-3 rounded-xl border flex items-center gap-2.5 text-left transition-all cursor-pointer ${
+                      activeTab === 'relatorios'
+                        ? 'border-slate-900 bg-slate-50 text-slate-900 font-bold'
+                        : 'border-slate-200/80 hover:bg-slate-50 text-slate-700'
+                    }`}
+                  >
+                    <BarChart3 className="w-4 h-4 text-slate-600 shrink-0" />
+                    <span className="text-xs truncate">Relatórios</span>
+                  </button>
+
                   {/* Configurações ou Disponibilidade */}
                   <button
                     onClick={() => {
@@ -563,6 +578,23 @@ export const MobileBottomNav: React.FC = () => {
                     <span className="text-xs truncate">
                       {isProfessional ? 'Horários & Agenda' : 'Configurações'}
                     </span>
+                  </button>
+
+                  {/* Fila Virtual & Painel TV */}
+                  <button
+                    onClick={() => {
+                      setActiveTab('fila');
+                      navigateTo('/app/gerente/fila');
+                      setIsMoreSheetOpen(false);
+                    }}
+                    className={`min-h-[50px] p-3 rounded-xl border flex items-center gap-2.5 text-left transition-all cursor-pointer ${
+                      activeTab === 'fila'
+                        ? 'border-slate-900 bg-slate-50 text-slate-900 font-bold'
+                        : 'border-slate-200/80 hover:bg-slate-50 text-slate-700'
+                    }`}
+                  >
+                    <Tv className="w-4 h-4 text-indigo-600 shrink-0" />
+                    <span className="text-xs truncate">Fila Virtual & TV</span>
                   </button>
                 </div>
               </div>

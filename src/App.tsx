@@ -10,6 +10,7 @@ import { ProfessionalsManager } from './components/professionals/ProfessionalsMa
 import { ComandasCheckout } from './components/financial/ComandasCheckout';
 import { ClientsManager } from './components/clients/ClientsManager';
 import { StudioSettings } from './components/settings/StudioSettings';
+import { ReportsManager } from './components/reports/ReportsManager';
 import { NewAppointmentModal } from './components/agenda/NewAppointmentModal';
 import { NewStudioModal } from './components/saas/NewStudioModal';
 import { PlansModal } from './components/saas/PlansModal';
@@ -24,6 +25,9 @@ import { ClientSignupPage } from './components/auth/ClientSignupPage';
 import { ClientPortal } from './components/client/ClientPortal';
 import { MobileBottomNav } from './components/layout/MobileBottomNav';
 import { Footer } from './components/layout/Footer';
+import { VirtualQueueManager } from './components/queue/VirtualQueueManager';
+import { NewQueueTicketModal } from './components/queue/NewQueueTicketModal';
+import { ReceptionTVDisplay } from './components/queue/ReceptionTVDisplay';
 import { Crown, Check, ExternalLink, Sparkles, Building2 } from 'lucide-react';
 
 const MainContent: React.FC = () => {
@@ -95,10 +99,12 @@ const MainContent: React.FC = () => {
           <>
             {activeTab === 'dashboard' && <ExecutiveDashboard />}
             {activeTab === 'agenda' && <AgendaView />}
+            {activeTab === 'fila' && <VirtualQueueManager />}
             {activeTab === 'servicos' && <ServicesManager />}
             {activeTab === 'profissionais' && <ProfessionalsManager />}
             {activeTab === 'comandas' && <ComandasCheckout />}
             {activeTab === 'clientes' && <ClientsManager />}
+            {activeTab === 'relatorios' && <ReportsManager />}
             {activeTab === 'configuracoes' && <StudioSettings />}
 
             {activeTab === 'planos' && (
@@ -194,6 +200,7 @@ const MainContent: React.FC = () => {
 
     {/* Global Modals */}
       <NewAppointmentModal />
+      <NewQueueTicketModal />
       <NewStudioModal />
       <PlansModal />
       <LoginModal />
@@ -209,6 +216,11 @@ const MainContent: React.FC = () => {
 
 const RootRouter: React.FC = () => {
   const { currentPath, isAuthenticated, userRole } = useApp();
+
+  // Public Reception TV Display Route: /painel-tv and /app/painel-tv
+  if (currentPath === '/painel-tv' || currentPath.startsWith('/painel-tv') || currentPath === '/app/painel-tv') {
+    return <ReceptionTVDisplay />;
+  }
 
   // Route: /login -> Unified Login Page
   if (currentPath === '/login') {

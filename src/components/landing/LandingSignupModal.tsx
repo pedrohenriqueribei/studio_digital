@@ -90,6 +90,19 @@ export const LandingSignupModal: React.FC<LandingSignupModalProps> = ({
     setIsSubmitting(true);
 
     try {
+      // Limpa dados mock ou sessões anteriores do localStorage
+      if (typeof window !== 'undefined') {
+        try {
+          Object.keys(localStorage).forEach((key) => {
+            if (key.startsWith('studiodigital_') && !key.includes('superAdminAuth')) {
+              localStorage.removeItem(key);
+            }
+          });
+        } catch (e) {
+          console.warn('Erro ao limpar localStorage:', e);
+        }
+      }
+
       const cleanEmail = email.trim().toLowerCase();
       const cleanPassword = password.trim();
       const cleanOwnerName = ownerName.trim() || `Gestor(a) - ${name.trim()}`;

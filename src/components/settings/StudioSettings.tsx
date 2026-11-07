@@ -16,6 +16,8 @@ import {
   Key,
   User,
   Phone,
+  Trash2,
+  AlertTriangle,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { ProfessionalAvailabilitySettings } from './ProfessionalAvailabilitySettings';
@@ -30,7 +32,11 @@ export const StudioSettings: React.FC = () => {
     settingsSubTab,
     setSettingsSubTab,
     selectedProfessionalForAvailabilityId,
+    resetCurrentTenantData,
   } = useApp();
+
+  const [isResettingTenant, setIsResettingTenant] = useState(false);
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
 
   // Se o usuário logado for 'profissional', ativa por padrão a aba de disponibilidade
   useEffect(() => {
@@ -372,6 +378,28 @@ export const StudioSettings: React.FC = () => {
           </div>
         </div>
 
+        {/* Danger Zone: Zerar Dados Operacionais */}
+        <div className="bg-rose-50/60 p-5 rounded-xl border border-rose-200/80 space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h4 className="text-xs font-bold text-rose-900 flex items-center gap-1.5">
+                <Trash2 className="w-4 h-4 text-rose-600" />
+                <span>Zerar Dados Operacionais do Estabelecimento</span>
+              </h4>
+              <p className="text-[11px] text-rose-700 mt-0.5">
+                Exclui clientes cadastrados, agendamentos e comandas deste estabelecimento para reiniciar a operação do zero.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowResetConfirm(true)}
+              className="px-3.5 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer shrink-0"
+            >
+              Zerar Dados
+            </button>
+          </div>
+        </div>
+
         {/* Submit */}
         <div className="flex items-center justify-between">
           {saveSuccess ? (
@@ -392,6 +420,51 @@ export const StudioSettings: React.FC = () => {
           </button>
         </div>
       </form>
+    )}
+
+    {/* Modal de Confirmação de Reset de Dados do Estabelecimento */}
+    {showResetConfirm && (
+      <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-150">
+        <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-md p-6">
+          <div className="w-12 h-12 rounded-2xl bg-rose-100 text-rose-600 flex items-center justify-center mb-4">
+            <AlertTriangle className="w-6 h-6" />
+          </div>
+
+          <h3 className="text-base font-bold text-slate-900 mb-1">
+            Zerar Dados de {currentBusiness.tradeName}?
+          </h3>
+          <p className="text-xs text-slate-500 mb-4 leading-relaxed">
+            Esta ação excluirá permanentemente todos os clientes, agendamentos e comandas vinculados a este estabelecimento. O cadastro do estabelecimento e do gestor serão mantidos, mas a operação iniciará com dados zerados.
+          </p>
+
+          <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+            <button
+              type="button"
+              disabled={isResettingTenant}
+              onClick={() => setShowResetConfirm(false)}
+              className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-xl text-xs font-semibold cursor-pointer"
+            >
+              Cancelar
+            </button>
+            <button
+              type="button"
+              disabled={isResettingTenant}
+              onClick={async () => {
+                setIsResettingTenant(true);
+                try {
+                  await resetCurrentTenantData();
+                  setShowResetConfirm(false);
+                } finally {
+                  setIsResettingTenant(false);
+                }
+              }}
+              className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold cursor-pointer"
+            >
+              {isResettingTenant ? 'Zerando...' : 'Confirmar e Zerar'}
+            </button>
+          </div>
+        </div>
+      </div>
     )}
   </div>
 );

@@ -21,6 +21,7 @@ import {
   Comanda,
   SaaSPlan,
   Review,
+  VirtualQueueItem,
 } from '../types';
 
 export enum OperationType {
@@ -204,6 +205,21 @@ export async function syncAppointmentToFirestore(app: Appointment): Promise<bool
 }
 
 /**
+ * Remove um Agendamento do Firestore.
+ */
+export async function deleteAppointmentFromFirestore(appId: string): Promise<boolean> {
+  const docPath = `appointments/${appId}`;
+  try {
+    await deleteDoc(doc(db, 'appointments', appId));
+    return true;
+  } catch (err) {
+    console.warn('Erro ao remover agendamento do Firestore:', err);
+    handleFirestoreError(err, OperationType.DELETE, docPath);
+    return false;
+  }
+}
+
+/**
  * Salva ou atualiza um Cliente no Firestore CRM.
  */
 export async function syncClientToFirestore(client: Client): Promise<boolean> {
@@ -228,6 +244,21 @@ export async function syncClientToFirestore(client: Client): Promise<boolean> {
 }
 
 /**
+ * Remove um Cliente do Firestore.
+ */
+export async function deleteClientFromFirestore(clientId: string): Promise<boolean> {
+  const docPath = `clients/${clientId}`;
+  try {
+    await deleteDoc(doc(db, 'clients', clientId));
+    return true;
+  } catch (err) {
+    console.warn('Erro ao remover cliente do Firestore:', err);
+    handleFirestoreError(err, OperationType.DELETE, docPath);
+    return false;
+  }
+}
+
+/**
  * Salva ou atualiza uma Comanda no Firestore POS.
  */
 export async function syncComandaToFirestore(cmd: Comanda): Promise<boolean> {
@@ -247,6 +278,52 @@ export async function syncComandaToFirestore(cmd: Comanda): Promise<boolean> {
   } catch (err) {
     console.warn('Erro ao salvar comanda no Firestore:', err);
     handleFirestoreError(err, OperationType.WRITE, docPath);
+    return false;
+  }
+}
+
+/**
+ * Remove uma Comanda do Firestore.
+ */
+export async function deleteComandaFromFirestore(cmdId: string): Promise<boolean> {
+  const docPath = `comandas/${cmdId}`;
+  try {
+    await deleteDoc(doc(db, 'comandas', cmdId));
+    return true;
+  } catch (err) {
+    console.warn('Erro ao remover comanda do Firestore:', err);
+    handleFirestoreError(err, OperationType.DELETE, docPath);
+    return false;
+  }
+}
+
+/**
+ * Exclui um estabelecimento (Tenant) e seus dados correlatos do Firestore.
+ */
+export async function deleteBusinessFromFirestore(businessId: string): Promise<boolean> {
+  const docPath = `businesses/${businessId}`;
+  try {
+    await deleteDoc(doc(db, 'businesses', businessId));
+
+    // Remove sub-recursos pertencentes a este businessId
+    const collectionsToClean = ['professionals', 'services', 'appointments', 'clients', 'comandas', 'reviews', 'virtualQueue'];
+    for (const colName of collectionsToClean) {
+      try {
+        const snap = await getDocs(collection(db, colName));
+        for (const docSnap of snap.docs) {
+          const data = docSnap.data();
+          if (data.businessId === businessId || data.tenant_id === businessId) {
+            await deleteDoc(doc(db, colName, docSnap.id)).catch(console.warn);
+          }
+        }
+      } catch (colErr) {
+        console.warn(`Erro ao limpar ${colName} do business ${businessId}:`, colErr);
+      }
+    }
+    return true;
+  } catch (err) {
+    console.warn('Erro ao excluir business do Firestore:', err);
+    handleFirestoreError(err, OperationType.DELETE, docPath);
     return false;
   }
 }
@@ -362,5 +439,215 @@ export async function syncReviewToFirestore(review: Review): Promise<boolean> {
     console.warn('Erro ao salvar avaliação no Firestore:', err);
     handleFirestoreError(err, OperationType.WRITE, docPath);
     return false;
+  }
+}
+
+/**
+ * Salva ou atualiza um Item da Fila Virtual no Firestore.
+ */
+export async function syncQueueItemToFirestore(item: VirtualQueueItem): Promise<boolean> {
+  const docPath = `virtualQueue/${item.id}`;
+  try {
+    const cleanDoc: Record<string, any> = { ...item };
+    Object.keys(cleanDoc).forEach((key) => {
+      if (cleanDoc[key] === undefined) {
+        delete cleanDoc[key];
+      }
+    });
+    if (!cleanDoc.tenant_id && cleanDoc.businessId) {
+      cleanDoc.tenant_id = cleanDoc.businessId;
+    }
+    await setDoc(doc(db, 'virtualQueue', item.id), cleanDoc, { merge: true });
+    return true;
+  } catch (err) {
+    console.warn('Erro ao salvar item da fila virtual no Firestore:', err);
+    handleFirestoreError(err, OperationType.WRITE, docPath);
+    return false;
+  }
+}
+
+/**
+ * Remove um Item da Fila Virtual do Firestore.
+ */
+export async function deleteQueueItemFromFirestore(itemId: string): Promise<boolean> {
+  const docPath = `virtualQueue/${itemId}`;
+  try {
+    await deleteDoc(doc(db, 'virtualQueue', itemId));
+    return true;
+  } catch (err) {
+    console.warn('Erro ao remover item da fila virtual do Firestore:', err);
+    handleFirestoreError(err, OperationType.DELETE, docPath);
+    return false;
+  }
+}
+
+/**
+ * Remove todos os dados de mock / demonstração legados do Firestore.
+ * Garante que a base permaneça limpa e sem dados simulados.
+ */
+export async function purgeAllMockDataFromFirestore(): Promise<{
+  deletedClients: number;
+  deletedAppointments: number;
+  deletedComandas: number;
+  deletedBusinesses: number;
+  deletedServices: number;
+  deletedProfessionals: number;
+}> {
+  const result = {
+    deletedClients: 0,
+    deletedAppointments: 0,
+    deletedComandas: 0,
+    deletedBusinesses: 0,
+    deletedServices: 0,
+    deletedProfessionals: 0,
+  };
+
+  // Nomes de clientes mock conhecidos de seeds anteriores
+  const mockClientNames = [
+    'camila rodrigues',
+    'lucas mendes',
+    'mariana souza',
+    'rafael costa',
+    'amanda silveira',
+    'juliana paiva',
+    'rodrigo medeiros',
+    'demo',
+    'teste mock',
+  ];
+
+  // 1. Clientes
+  try {
+    const clientsSnap = await getDocs(collection(db, 'clients'));
+    for (const d of clientsSnap.docs) {
+      const data = d.data();
+      const docId = d.id.toLowerCase();
+      const name = (data.name || '').toLowerCase();
+      const isMock =
+        docId.startsWith('cli_biz_') ||
+        docId.includes('demo') ||
+        docId.includes('mock') ||
+        mockClientNames.some((m) => name.includes(m));
+
+      if (isMock) {
+        await deleteDoc(doc(db, 'clients', d.id)).catch(console.warn);
+        result.deletedClients++;
+      }
+    }
+  } catch (err) {
+    console.warn('Erro ao purgar clientes mock:', err);
+  }
+
+  // 2. Agendamentos
+  try {
+    const appSnap = await getDocs(collection(db, 'appointments'));
+    for (const d of appSnap.docs) {
+      const data = d.data();
+      const docId = d.id.toLowerCase();
+      const clientName = (data.clientName || '').toLowerCase();
+      const isMock =
+        docId.startsWith('app_') && (
+          docId.includes('demo') ||
+          docId.includes('mock') ||
+          data.businessId === 'biz_clinica_lumina' ||
+          data.businessId === 'biz_barbearia_navalha' ||
+          mockClientNames.some((m) => clientName.includes(m))
+        );
+
+      if (isMock) {
+        await deleteDoc(doc(db, 'appointments', d.id)).catch(console.warn);
+        result.deletedAppointments++;
+      }
+    }
+  } catch (err) {
+    console.warn('Erro ao purgar agendamentos mock:', err);
+  }
+
+  // 3. Comandas
+  try {
+    const cmdSnap = await getDocs(collection(db, 'comandas'));
+    for (const d of cmdSnap.docs) {
+      const data = d.data();
+      const docId = d.id.toLowerCase();
+      const clientName = (data.clientName || '').toLowerCase();
+      const isMock =
+        docId.includes('demo') ||
+        docId.includes('mock') ||
+        data.businessId === 'biz_clinica_lumina' ||
+        mockClientNames.some((m) => clientName.includes(m));
+
+      if (isMock) {
+        await deleteDoc(doc(db, 'comandas', d.id)).catch(console.warn);
+        result.deletedComandas++;
+      }
+    }
+  } catch (err) {
+    console.warn('Erro ao purgar comandas mock:', err);
+  }
+
+  // 4. Estabelecimentos Mock Legados
+  try {
+    const bizSnap = await getDocs(collection(db, 'businesses'));
+    const mockBizIds = ['biz_clinica_lumina', 'biz_barbearia_navalha', 'biz_studio_glamour', 'biz_demo'];
+    for (const d of bizSnap.docs) {
+      const docId = d.id.toLowerCase();
+      const name = (d.data().name || '').toLowerCase();
+      if (mockBizIds.includes(docId) || docId.includes('demo') || docId.includes('mock') || name.includes('lumina')) {
+        await deleteDoc(doc(db, 'businesses', d.id)).catch(console.warn);
+        result.deletedBusinesses++;
+      }
+    }
+  } catch (err) {
+    console.warn('Erro ao purgar estabelecimentos mock:', err);
+  }
+
+  // 5. Profissionais Mock Legados
+  try {
+    const proSnap = await getDocs(collection(db, 'professionals'));
+    const mockProIds = ['pro_dra_patricia', 'pro_amanda', 'pro_marcos', 'pro_demo_1', 'pro_demo_2', 'pro_demo_3', 'pro_demo_4'];
+    for (const d of proSnap.docs) {
+      const docId = d.id.toLowerCase();
+      if (mockProIds.includes(docId) || docId.includes('demo_') || d.data().businessId === 'biz_clinica_lumina') {
+        await deleteDoc(doc(db, 'professionals', d.id)).catch(console.warn);
+        result.deletedProfessionals++;
+      }
+    }
+  } catch (err) {
+    console.warn('Erro ao purgar profissionais mock:', err);
+  }
+
+  // 6. Serviços Mock Legados
+  try {
+    const srvSnap = await getDocs(collection(db, 'services'));
+    for (const d of srvSnap.docs) {
+      const docId = d.id.toLowerCase();
+      if (docId.includes('demo') || d.data().businessId === 'biz_clinica_lumina') {
+        await deleteDoc(doc(db, 'services', d.id)).catch(console.warn);
+        result.deletedServices++;
+      }
+    }
+  } catch (err) {
+    console.warn('Erro ao purgar serviços mock:', err);
+  }
+
+  return result;
+}
+
+/**
+ * Zera todos os dados operacionais (clientes, agendamentos, comandas e serviços) de um tenant específico.
+ */
+export async function resetTenantDataToZero(businessId: string): Promise<void> {
+  const collections = ['appointments', 'comandas', 'clients', 'reviews', 'virtualQueue'];
+  for (const col of collections) {
+    try {
+      const snap = await getDocs(collection(db, col));
+      for (const d of snap.docs) {
+        const data = d.data();
+        if (data.businessId === businessId || data.tenant_id === businessId) {
+          await deleteDoc(doc(db, col, d.id)).catch(console.warn);
+        }
+      }
+    } catch (e) {
+      console.warn(`Erro ao zerar ${col} do tenant ${businessId}:`, e);
+    }
   }
 }

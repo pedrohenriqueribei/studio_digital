@@ -15,6 +15,7 @@ import {
   Clock,
   X,
   ExternalLink,
+  Tv,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { UserRole } from '../../types';
@@ -283,14 +284,32 @@ export const Header: React.FC = () => {
                 <span className="hidden xs:inline">Novo Tenant</span>
               </button>
             ) : (
-              <button
-                onClick={() => setIsNewAppointmentModalOpen(true)}
-                className="min-h-[44px] px-3 sm:px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
-                title="Novo Agendamento"
-              >
-                <Plus className="w-4 h-4 shrink-0 text-amber-400" />
-                <span className="hidden xs:inline">Agendar</span>
-              </button>
+              <>
+                <button
+                  onClick={() => setIsNewAppointmentModalOpen(true)}
+                  className="min-h-[44px] px-3 sm:px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
+                  title="Novo Agendamento"
+                >
+                  <Plus className="w-4 h-4 shrink-0 text-amber-400" />
+                  <span className="hidden xs:inline">Agendar</span>
+                </button>
+
+                <button
+                  onClick={() => {
+                    setActiveTab('fila');
+                    navigateTo('/app/gerente/fila');
+                  }}
+                  className={`min-h-[44px] px-2.5 sm:px-3 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95 ${
+                    activeTab === 'fila'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200/60'
+                  }`}
+                  title="Fila Virtual e Painel da Recepção"
+                >
+                  <Tv className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Fila & TV</span>
+                </button>
+              </>
             )}
 
             {/* Tenant Role Switcher (Hidden on narrow mobile, available in drawer/profile) */}

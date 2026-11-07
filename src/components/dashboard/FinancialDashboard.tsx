@@ -163,37 +163,23 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
     const revenueFromApps = monthApps.reduce((acc, a) => acc + (a.price || 0), 0);
 
     // Faturamento consolidado do mês
-    let faturamentoMensal = revenueFromComandas > 0 ? revenueFromComandas : revenueFromApps;
-    if (faturamentoMensal === 0) {
-      const allComandasRev = scopedComandas
-        .filter((c) => c.status === 'fechada')
-        .reduce((acc, c) => acc + (c.total || 0), 0);
-      const allAppsRev = scopedAppointments
-        .filter((a) => a.status !== 'cancelado')
-        .reduce((acc, a) => acc + (a.price || 0), 0);
-      faturamentoMensal = allComandasRev > 0 ? allComandasRev : (allAppsRev > 0 ? allAppsRev : 15840);
-    }
+    const faturamentoMensal = revenueFromComandas > 0 ? revenueFromComandas : revenueFromApps;
 
     // Número de atendimentos no mês
-    let numeroAtendimentos = monthApps.length;
-    if (numeroAtendimentos === 0) {
-      numeroAtendimentos = monthComandas.length > 0
-        ? monthComandas.length
-        : (scopedAppointments.length > 0 ? scopedAppointments.length : 52);
-    }
+    const numeroAtendimentos = monthApps.length > 0 ? monthApps.length : monthComandas.length;
 
     const concluidos = monthApps.filter((a) => a.status === 'concluido').length;
     const taxaConclusao = numeroAtendimentos > 0
-      ? Math.round(((concluidos > 0 ? concluidos : Math.round(numeroAtendimentos * 0.88)) / numeroAtendimentos) * 100)
-      : 92;
+      ? Math.round((concluidos / numeroAtendimentos) * 100)
+      : 0;
 
     // Ticket Médio
     const ticketMedio = numeroAtendimentos > 0
       ? faturamentoMensal / numeroAtendimentos
-      : 145.5;
+      : 0;
 
     // Projeção do Mês (Ritmo diário projetado para 30/31 dias)
-    const dailyPace = currentDayOfMonth > 0 ? faturamentoMensal / currentDayOfMonth : faturamentoMensal / 15;
+    const dailyPace = currentDayOfMonth > 0 ? faturamentoMensal / currentDayOfMonth : 0;
     const projecaoMensal = Math.round(dailyPace * daysInCurrentMonth);
 
     return {
@@ -288,42 +274,34 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
 
     const totalVal = pixSum + cardSum + cashSum;
 
-    // Se ainda não houver movimentação registrada, gera distribuição de referência
+    // Se ainda não houver movimentação registrada, retorna distribuição zerada
     if (totalVal === 0) {
-      const totalWeeklyRev = weeklyLineData.reduce((acc, d) => acc + d.faturamento, 0);
-      const baseTotal = totalWeeklyRev > 0 ? totalWeeklyRev : 2850;
-
-      const pVal = Math.round(baseTotal * 0.55);
-      const cVal = Math.round(baseTotal * 0.35);
-      const mVal = Math.round(baseTotal * 0.1);
-      const grandTotal = pVal + cVal + mVal;
-
       return [
         {
           name: 'PIX',
           key: 'pix',
-          value: pVal,
-          count: Math.max(1, Math.round(pVal / 85)),
-          percentage: Math.round((pVal / grandTotal) * 100),
-          color: '#10b981', // Emerald
+          value: 0,
+          count: 0,
+          percentage: 0,
+          color: '#10b981',
           icon: QrCode,
         },
         {
           name: 'Cartão (Crédito/Débito)',
           key: 'cartao',
-          value: cVal,
-          count: Math.max(1, Math.round(cVal / 110)),
-          percentage: Math.round((cVal / grandTotal) * 100),
-          color: '#6366f1', // Indigo
+          value: 0,
+          count: 0,
+          percentage: 0,
+          color: '#6366f1',
           icon: CreditCard,
         },
         {
           name: 'Dinheiro',
           key: 'dinheiro',
-          value: mVal,
-          count: Math.max(1, Math.round(mVal / 60)),
-          percentage: Math.round((mVal / grandTotal) * 100),
-          color: '#f59e0b', // Amber
+          value: 0,
+          count: 0,
+          percentage: 0,
+          color: '#f59e0b',
           icon: Banknote,
         },
       ];

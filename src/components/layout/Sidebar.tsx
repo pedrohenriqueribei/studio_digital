@@ -19,6 +19,8 @@ import {
   TrendingUp,
   X,
   Key,
+  BarChart3,
+  Tv,
 } from 'lucide-react';
 import { useApp, AppTab, SuperAdminTab } from '../../context/AppContext';
 import { getTodayDateString } from '../../utils/date';
@@ -34,6 +36,7 @@ export const Sidebar: React.FC = () => {
     currentBusiness,
     activeAppointments,
     activeComandas,
+    activeQueueItems,
     setIsNewStudioModalOpen,
     setIsPlansModalOpen,
     currentRole,
@@ -59,6 +62,9 @@ export const Sidebar: React.FC = () => {
     (a) => a.date === todayStr && a.status !== 'cancelado'
   ).length;
   const openComandasCount = activeComandas.filter((c) => c.status === 'aberta').length;
+  const waitingQueueCount = activeQueueItems.filter(
+    (q) => q.status === 'aguardando' || q.status === 'chamado'
+  ).length;
 
   const tenantNavItems: {
     id: AppTab;
@@ -76,6 +82,12 @@ export const Sidebar: React.FC = () => {
       label: 'Agenda',
       icon: Calendar,
       badge: todayAppointmentsCount > 0 ? todayAppointmentsCount : undefined,
+    },
+    {
+      id: 'fila',
+      label: 'Fila Virtual & TV',
+      icon: Tv,
+      badge: waitingQueueCount > 0 ? waitingQueueCount : undefined,
     },
     {
       id: 'servicos',
@@ -97,6 +109,11 @@ export const Sidebar: React.FC = () => {
       id: 'clientes',
       label: 'Clientes',
       icon: UserCheck,
+    },
+    {
+      id: 'relatorios',
+      label: 'Relatórios & Métricas',
+      icon: BarChart3,
     },
     {
       id: 'planos',

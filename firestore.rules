@@ -170,5 +170,13 @@ service cloud.firestore {
     match /test/{docId} {
       allow read, write: if true;
     }
+
+    // -------------------------------------------------------------
+    // 14. COLEÇÃO: FILA VIRTUAL & ENCAIXES (/virtualQueue/{queueId})
+    // -------------------------------------------------------------
+    match /virtualQueue/{queueId} {
+      allow get, list: if true;
+      allow create, update, delete: if isValidId(queueId);
+    }
   }
 }

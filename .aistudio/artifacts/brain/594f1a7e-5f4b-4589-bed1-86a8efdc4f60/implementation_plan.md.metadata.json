@@ -1,6 +1,6 @@
 {
-  "summary":  "Plano de implementação e arquitetura completo do Sistema de Clientes (Cadastro, Autenticação, Portal Exclusivo e Controle de Acesso RBAC) integrado à plataforma Studio Digital.",
-  "updatedAt":  "2026-10-29T20:29:31.517851630Z",
-  "requestFeedback":  true,
-  "userFacing":  true
+  "summary": "Plano de implementação detalhado para a Fila Virtual Inteligente com encaixe presencial, preservação da prioridade de horários agendados, painel público para TV de recepção com chamadas sonoras/visuais e faturamento automatizado integrado às comandas e comissões dos profissionais.",
+  "updatedAt": "2026-11-06T22:37:56.777113185Z",
+  "requestFeedback": true,
+  "userFacing": true
 }

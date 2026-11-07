@@ -19,6 +19,8 @@ import {
   Review,
   ClientNote,
   ClientPreferences,
+  VirtualQueueItem,
+  VirtualQueueStatus,
 } from '../types';
 import {
   INITIAL_BUSINESSES,
@@ -48,17 +50,25 @@ import { getTodayDateString } from '../utils/date';
 import { checkAppointmentConflict, AppointmentConflictResult } from '../utils/availability';
 import {
   syncBusinessToFirestore,
+  deleteBusinessFromFirestore,
   syncProfessionalToFirestore,
   deleteProfessionalFromFirestore,
   syncServiceToFirestore,
   deleteServiceFromFirestore,
   syncAppointmentToFirestore,
+  deleteAppointmentFromFirestore,
   syncClientToFirestore,
+  deleteClientFromFirestore,
   syncComandaToFirestore,
+  deleteComandaFromFirestore,
   syncReviewToFirestore,
+  syncQueueItemToFirestore,
+  deleteQueueItemFromFirestore,
   seedPlansToFirestore,
   createTenantUserInFirebaseAuth,
   createClientUserInFirebaseAuth,
+  purgeAllMockDataFromFirestore,
+  resetTenantDataToZero,
 } from '../services/firestoreSync';
 
 export type { AppTab } from '../types';
@@ -237,6 +247,28 @@ interface AppContextType {
   setIsNewStudioModalOpen: (open: boolean) => void;
   isPlansModalOpen: boolean;
   setIsPlansModalOpen: (open: boolean) => void;
+  // Virtual Queue & Reception TV
+  queueItems: VirtualQueueItem[];
+  activeQueueItems: VirtualQueueItem[];
+  addToQueue: (data: {
+    clientName: string;
+    clientPhone?: string;
+    serviceId: string;
+    professionalId?: string;
+    anyProfessional: boolean;
+    clientId?: string;
+    notes?: string;
+  }) => Promise<VirtualQueueItem>;
+  callQueueTicket: (id: string) => Promise<boolean>;
+  startQueueAttendance: (id: string, assignedProId?: string) => Promise<{ success: boolean; comandaId?: string }>;
+  finishQueueAttendance: (id: string) => Promise<boolean>;
+  cancelQueueTicket: (id: string, reason?: 'desistiu' | 'cancelado') => Promise<boolean>;
+  isNewQueueModalOpen: boolean;
+  setIsNewQueueModalOpen: (open: boolean) => void;
+
+  // Mock and Demo data cleanup
+  clearAllMockData: () => Promise<{ deletedCount: number }>;
+  resetCurrentTenantData: () => Promise<void>;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -299,6 +331,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         'profissionais',
         'comandas',
         'clientes',
+        'relatorios',
         'planos',
         'configuracoes',
       ];
@@ -396,6 +429,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         'profissionais',
         'comandas',
         'clientes',
+        'relatorios',
         'planos',
         'configuracoes',
       ];
@@ -416,6 +450,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         'profissionais',
         'comandas',
         'clientes',
+        'relatorios',
         'planos',
         'configuracoes',
       ];
@@ -758,6 +793,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [comandas, setComandas] = useState<Comanda[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
+  const [queueItems, setQueueItems] = useState<VirtualQueueItem[]>([]);
+  const [isNewQueueModalOpen, setIsNewQueueModalOpen] = useState(false);
 
   // Global modals
   const [isNewAppointmentModalOpen, setIsNewAppointmentModalOpen] = useState(false);
@@ -779,6 +816,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   // Real-time synchronization exclusively with Firebase Firestore collections
   useEffect(() => {
+    // 0. Limpa quaisquer dados mock ou demonstrativos legados do Firestore
+    purgeAllMockDataFromFirestore().catch((e) => console.warn('Purge mock data warning:', e));
+
     // 1. Seed plans to Firestore so the database is guaranteed populated
     seedPlansToFirestore(saasPlans).catch((e) => console.warn('Seed plans warning:', e));
 
@@ -875,6 +915,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn('Firestore reviews listener error:', error);
     });
 
+    // 10. Real-time listener for virtual queue
+    const unsubQueue = onSnapshot(collection(db, 'virtualQueue'), (snapshot) => {
+      const firestoreQueue: VirtualQueueItem[] = [];
+      snapshot.forEach((doc) => {
+        firestoreQueue.push(doc.data() as VirtualQueueItem);
+      });
+      setQueueItems(firestoreQueue);
+    }, (error) => {
+      console.warn('Firestore virtualQueue listener error:', error);
+    });
+
     return () => {
       unsubPlans();
       unsubBiz();
@@ -884,6 +935,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubClients();
       unsubComandas();
       unsubReviews();
+      unsubQueue();
     };
   }, []);
 
@@ -929,6 +981,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const activeComandas = currentBusiness
     ? comandas.filter((c) => c.businessId === currentBusiness.id)
     : [];
+  const activeQueueItems = currentBusiness
+    ? queueItems.filter((q) => q.businessId === currentBusiness.id)
+    : [];
 
   const switchBusiness = (businessId: string) => {
     setCurrentBusinessId(businessId);
@@ -969,10 +1024,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn('Firebase Auth user creation notice:', authErr);
     }
 
-    // 2. Persist Business to Firestore
+    // 2. Persist Business to Firestore with monthly revenue starting at R$ 0,00
     await syncBusinessToFirestore(created);
 
-    // 3. Seed default owner professional for this new business
+    // 3. Cadastra o gestor responsável como primeiro usuário administrativo do negócio (dados zerados)
     const defaultOwner: Professional = {
       id: `pro_${Date.now()}`,
       businessId: id,
@@ -984,8 +1039,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       phone: newBiz.phone,
       role: 'gerente',
       avatar: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=200&h=200&fit=crop&crop=face',
-      specialties: ['Gestão Estratégica', 'Atendimento'],
-      commissionPercentage: 50,
+      specialties: ['Gestão Geral'],
+      commissionPercentage: 0,
       active: true,
       workHours: { start: '09:00', end: '19:00', daysOfWeek: [1, 2, 3, 4, 5, 6] },
       totalEarningsMonth: 0,
@@ -993,172 +1048,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     await syncProfessionalToFirestore(defaultOwner);
 
-    // 4. Add default initial service
-    const defaultServices: Service[] = [
-      {
-        id: `srv_${Date.now()}_1`,
-        businessId: id,
-        tenant_id: id,
-        name:
-          newBiz.type === 'barbearia'
-            ? 'Corte Clássico'
-            : newBiz.type === 'clinica_estetica'
-            ? 'Limpeza de Pele Essencial'
-            : 'Corte & Escova Modeladora',
-        category: 'Principal',
-        durationMinutes: 45,
-        price: newBiz.type === 'barbearia' ? 70 : newBiz.type === 'clinica_estetica' ? 220 : 150,
-        commissionPercentage: 50,
-        description: 'Serviço padrão de alta satisfação.',
-        allowedProfessionalIds: [defaultOwner.id],
-        active: true,
-      },
-    ];
-    await syncServiceToFirestore(defaultServices[0]);
-
-    // 4. Clientes iniciais com histórico, preferências de cortes, cores e alergias
-    const defaultClients: Client[] = [
-      {
-        id: `cli_${id}_1`,
-        businessId: id,
-        tenant_id: id,
-        name: 'Camila Rodrigues',
-        phone: '(11) 98765-4321',
-        email: 'camila.rodrigues@email.com',
-        photoURL: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&h=150&fit=crop&crop=face',
-        birthDay: 15,
-        birthMonth: 8,
-        birthDateFormatted: '15/08',
-        totalVisits: 3,
-        totalSpent: 450,
-        lastVisit: getTodayDateString(),
-        preferredProfessionalId: defaultOwner.id,
-        preferredProfessionalName: defaultOwner.name,
-        tags: ['VIP', 'Recorrente'],
-        preferences: {
-          cutTypes: ['Corte em camadas', 'Franja cortina'],
-          preferredColors: ['Morena Iluminada', 'Esmalte Nude Chic'],
-          allergies: ['Amônia (Tintura)', 'Látex (Luvas)'],
-          generalNotes: 'Sensibilidade no couro cabeludo; prefere água morna.',
-        },
-        importantNotes: [
-          {
-            id: `note_${Date.now()}_1`,
-            text: '⚠️ ATENÇÃO: Alérgica a amônia. Usar tonalizante sem amônia previamente aprovado.',
-            authorName: defaultOwner.name,
-            authorRole: 'profissional',
-            createdAt: new Date().toISOString(),
-            isAlert: true,
-          },
-          {
-            id: `note_${Date.now()}_2`,
-            text: 'Cliente pontual, prefere atendimento com café sem açúcar.',
-            authorName: 'Recepção',
-            authorRole: 'gerente',
-            createdAt: new Date().toISOString(),
-          },
-        ],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: `cli_${id}_2`,
-        businessId: id,
-        tenant_id: id,
-        name: 'Lucas Mendes',
-        phone: '(11) 91234-5678',
-        email: 'lucas.mendes@email.com',
-        photoURL: 'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&h=150&fit=crop&crop=face',
-        birthDay: 22,
-        birthMonth: 11,
-        birthDateFormatted: '22/11',
-        totalVisits: 5,
-        totalSpent: 350,
-        lastVisit: getTodayDateString(),
-        preferredProfessionalId: defaultOwner.id,
-        preferredProfessionalName: defaultOwner.name,
-        tags: ['Recorrente'],
-        preferences: {
-          cutTypes: ['Degradê navalhado', 'Barba modelada'],
-          generalNotes: 'Navalha apenas com toalha quente e loção pós-barba suave sem álcool.',
-        },
-        importantNotes: [
-          {
-            id: `note_${Date.now()}_3`,
-            text: 'Pediu para manter o comprimento no topo e degradê médio lateral.',
-            authorName: defaultOwner.name,
-            authorRole: 'profissional',
-            createdAt: new Date().toISOString(),
-          },
-        ],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: `cli_${id}_3`,
-        businessId: id,
-        tenant_id: id,
-        name: 'Mariana Souza',
-        phone: '(11) 97777-8888',
-        email: 'mariana.souza@email.com',
-        photoURL: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=150&h=150&fit=crop&crop=face',
-        birthDay: 5,
-        birthMonth: 3,
-        birthDateFormatted: '05/03',
-        totalVisits: 1,
-        totalSpent: 180,
-        lastVisit: getTodayDateString(),
-        preferredProfessionalId: defaultOwner.id,
-        preferredProfessionalName: defaultOwner.name,
-        tags: ['Novo'],
-        preferences: {
-          cutTypes: ['Long Bob'],
-          preferredColors: ['Loiro Pérola'],
-        },
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-      {
-        id: `cli_${id}_4`,
-        businessId: id,
-        tenant_id: id,
-        name: 'Rafael Costa',
-        phone: '(11) 94444-5555',
-        email: 'rafael.costa@email.com',
-        photoURL: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=150&h=150&fit=crop&crop=face',
-        birthDay: 19,
-        birthMonth: 6,
-        birthDateFormatted: '19/06',
-        totalVisits: 2,
-        totalSpent: 220,
-        lastVisit: getTodayDateString(),
-        preferredProfessionalId: defaultOwner.id,
-        preferredProfessionalName: defaultOwner.name,
-        tags: ['Com débito'],
-        importantNotes: [
-          {
-            id: `note_${Date.now()}_4`,
-            text: '⚠️ Pendência de R$ 70,00 referente a produto de home care da última sessão.',
-            authorName: 'Recepção',
-            authorRole: 'gerente',
-            createdAt: new Date().toISOString(),
-            isAlert: true,
-          },
-        ],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-      },
-    ];
-
-    for (const c of defaultClients) {
-      syncClientToFirestore(c).catch(console.warn);
-    }
-
-    // 5. Update local state and active session immediately
+    // 4. Início de Teste Gratuito 100% Zerado:
+    // Sem clientes mock, sem agendamentos simulados, sem comandas e sem serviços fictícios.
+    // O novo assinante inicia com espaço totalmente limpo e pronto para configurar.
     setBusinesses((prev) => [created, ...prev.filter((b) => b.id !== id)]);
-    setProfessionals((prev) => [...prev.filter((p) => p.id !== defaultOwner.id), defaultOwner]);
-    setServices((prev) => [...prev.filter((s) => s.id !== defaultServices[0].id), defaultServices[0]]);
-    setClients((prev) => [...defaultClients, ...prev]);
+    setProfessionals((prev) => [...prev.filter((p) => p.businessId !== id), defaultOwner]);
+    setServices((prev) => prev.filter((s) => s.businessId !== id));
+    setClients((prev) => prev.filter((c) => c.businessId !== id));
+    setAppointments((prev) => prev.filter((a) => a.businessId !== id));
+    setComandas((prev) => prev.filter((c) => c.businessId !== id));
     setCurrentBusinessId(id);
     switchRole('gerente');
 
@@ -1171,8 +1069,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
 
     addNotification({
-      title: 'Espaço cadastrado com sucesso!',
-      message: `${newBiz.name} foi adicionado à plataforma e salvo no Firebase no plano ${newBiz.planId.toUpperCase()}.`,
+      title: 'Teste Gratuito Iniciado com Dados Zerados!',
+      message: `${newBiz.name} foi criado no plano ${newBiz.planId.toUpperCase()} com a base 100% limpa e pronta para uso.`,
       type: 'system',
     });
 
@@ -1218,19 +1116,119 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   const deleteBusiness = (businessId: string) => {
     setBusinesses((prev) => prev.filter((b) => b.id !== businessId));
-    // Clean related
+    // Clean related in local state
     setProfessionals((prev) => prev.filter((p) => p.businessId !== businessId));
     setServices((prev) => prev.filter((s) => s.businessId !== businessId));
     setAppointments((prev) => prev.filter((a) => a.businessId !== businessId));
     setComandas((prev) => prev.filter((c) => c.businessId !== businessId));
     setClients((prev) => prev.filter((c) => c.businessId !== businessId));
 
+    // Delete from Firestore
+    deleteBusinessFromFirestore(businessId).catch((e) => console.warn('Firestore delete business:', e));
+
     if (currentBusinessId === businessId) {
       const remaining = businesses.filter((b) => b.id !== businessId);
       if (remaining.length > 0) {
         setCurrentBusinessId(remaining[0].id);
+      } else {
+        setCurrentBusinessId('');
       }
     }
+  };
+
+  // Exclui todos os dados mock e limpa o banco de dados
+  const clearAllMockData = async (): Promise<{ deletedCount: number }> => {
+    const res = await purgeAllMockDataFromFirestore();
+    const total =
+      res.deletedClients +
+      res.deletedAppointments +
+      res.deletedComandas +
+      res.deletedBusinesses +
+      res.deletedServices +
+      res.deletedProfessionals;
+
+    // Atualiza states locais expurgando mock legados
+    const mockNames = ['camila rodrigues', 'lucas mendes', 'mariana souza', 'rafael costa', 'amanda silveira'];
+    setClients((prev) =>
+      prev.filter(
+        (c) =>
+          !c.id.startsWith('cli_biz_') &&
+          !c.id.includes('demo') &&
+          !mockNames.some((m) => c.name.toLowerCase().includes(m))
+      )
+    );
+    setAppointments((prev) =>
+      prev.filter(
+        (a) =>
+          !a.id.includes('demo') &&
+          !a.id.includes('mock') &&
+          !mockNames.some((m) => (a.clientName || '').toLowerCase().includes(m))
+      )
+    );
+    setComandas((prev) =>
+      prev.filter(
+        (c) =>
+          !c.id.includes('demo') &&
+          !c.id.includes('mock') &&
+          !mockNames.some((m) => (c.clientName || '').toLowerCase().includes(m))
+      )
+    );
+    setBusinesses((prev) =>
+      prev.filter(
+        (b) =>
+          b.id !== 'biz_clinica_lumina' &&
+          b.id !== 'biz_barbearia_navalha' &&
+          b.id !== 'biz_studio_glamour' &&
+          !b.id.includes('demo')
+      )
+    );
+    setProfessionals((prev) =>
+      prev.filter(
+        (p) =>
+          !p.id.includes('demo') &&
+          p.id !== 'pro_dra_patricia' &&
+          p.id !== 'pro_amanda' &&
+          p.id !== 'pro_marcos'
+      )
+    );
+
+    // Limpa completamente o localStorage de dados anteriores
+    if (typeof window !== 'undefined') {
+      try {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && key.startsWith('studiodigital_')) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach((k) => localStorage.removeItem(k));
+      } catch (err) {
+        console.warn('Erro ao limpar localStorage:', err);
+      }
+    }
+
+    addNotification({
+      title: 'Limpeza de Dados Mock Concluída',
+      message: `Foram excluídos todos os registros demonstrativos do Firestore e limpo o armazenamento local. Sua base está zerada.`,
+      type: 'system',
+    });
+
+    return { deletedCount: total };
+  };
+
+  // Zera todos os dados operacionais do tenant atual
+  const resetCurrentTenantData = async () => {
+    if (!currentBusinessId) return;
+    await resetTenantDataToZero(currentBusinessId);
+    setClients((prev) => prev.filter((c) => c.businessId !== currentBusinessId));
+    setAppointments((prev) => prev.filter((a) => a.businessId !== currentBusinessId));
+    setComandas((prev) => prev.filter((c) => c.businessId !== currentBusinessId));
+    addNotification({
+      title: 'Dados do Estabelecimento Zerados',
+      message: `Clientes, agendamentos e comandas deste espaço foram completamente zerados.`,
+      type: 'system',
+    });
   };
 
   // SaaS Plans CRUD
@@ -1705,8 +1703,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, error: 'Data de nascimento inválida (dia entre 1-31 e mês entre 1-12).' };
     }
 
-    // Validação de unicidade de e-mail
-    const existsLocally = clients.some((c) => (c.email || '').toLowerCase() === email);
+    // Validação de unicidade de e-mail (ignora o próprio cliente caso esteja completando cadastro existente)
+    const existsLocally = clients.some(
+      (c) =>
+        (c.email || '').toLowerCase() === email &&
+        (!data.existingClientId || c.id !== data.existingClientId)
+    );
     if (existsLocally) {
       return { success: false, error: 'Este endereço de e-mail já está cadastrado no sistema.' };
     }
@@ -1715,7 +1717,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const q = query(collection(db, 'clients'), where('email', '==', email));
       const snap = await getDocs(q);
       if (!snap.empty) {
-        return { success: false, error: 'Este endereço de e-mail já está cadastrado no sistema.' };
+        const docMatchesAnother = snap.docs.some(
+          (d) => !data.existingClientId || d.id !== data.existingClientId
+        );
+        if (docMatchesAnother) {
+          return { success: false, error: 'Este endereço de e-mail já está cadastrado no sistema.' };
+        }
       }
     } catch (e) {
       console.warn('Verificação de e-mail único no Firestore:', e);
@@ -1735,11 +1742,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const birthDateFormatted = `${String(birthDay).padStart(2, '0')}/${String(birthMonth).padStart(2, '0')}`;
-    const targetBizId = currentBusiness?.id || (businesses.length > 0 ? businesses[0].id : '');
+    const existingClient = data.existingClientId
+      ? clients.find((c) => c.id === data.existingClientId)
+      : null;
+    const clientIdToUse = existingClient ? existingClient.id : `cli_${Date.now()}`;
+    const targetBizId = existingClient?.businessId || currentBusiness?.id || (businesses.length > 0 ? businesses[0].id : '');
 
-    const newClientId = `cli_${Date.now()}`;
     const newClient: Client = {
-      id: newClientId,
+      ...(existingClient || {}),
+      id: clientIdToUse,
       businessId: targetBizId,
       tenant_id: targetBizId,
       name,
@@ -1749,19 +1760,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       birthDay,
       birthMonth,
       birthDateFormatted,
-      photoURL: data.photoURL || undefined,
+      photoURL: data.photoURL || existingClient?.photoURL || undefined,
       emailVerified: false,
-      totalVisits: 0,
-      totalSpent: 0,
-      createdAt: new Date().toISOString(),
+      totalVisits: existingClient?.totalVisits || 0,
+      totalSpent: existingClient?.totalSpent || 0,
+      createdAt: existingClient?.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString(),
+      status: 'Completo',
+      profileStatus: 'Completo',
     };
 
     // 2. Persistir no Firestore
     await syncClientToFirestore(newClient);
 
     // 3. Atualizar estado local
-    setClients((prev) => [newClient, ...prev.filter((c) => c.id !== newClientId)]);
+    setClients((prev) => [newClient, ...prev.filter((c) => c.id !== clientIdToUse)]);
     setCurrentClient(newClient);
     setStored('clientUser', newClient);
     setCurrentRole('client');
@@ -1772,7 +1785,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     const claims: CustomUserClaims = {
       role: 'client',
-      client_id: newClientId,
+      client_id: clientIdToUse,
       tenant_id: targetBizId,
       email,
       name,
@@ -2239,6 +2252,26 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setAppointments((prev) => prev.map((a) => (a.id === app.id ? app : a)));
     syncAppointmentToFirestore(app).catch(console.warn);
+
+    // Atualiza profissional e comanda associada caso alterado
+    setComandas((prev) =>
+      prev.map((c) =>
+        c.appointmentId === app.id
+          ? {
+              ...c,
+              professionalId: app.professionalId,
+              professionalName: app.professionalName || c.professionalName,
+            }
+          : c
+      )
+    );
+
+    addNotification({
+      title: 'Agendamento Atualizado',
+      message: `${app.clientName} agendado(a) com ${app.professionalName || 'Profissional'} às ${app.startTime}.`,
+      type: 'booking',
+    });
+
     return { success: true };
   };
 
@@ -2314,6 +2347,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const newClient: Client = {
       ...cli,
       id,
+      status: cli.status || cli.profileStatus || 'Completo',
+      profileStatus: cli.profileStatus || (cli.status === 'A Completar' ? 'A Completar' : 'Completo'),
       tags: cli.tags && cli.tags.length > 0 ? cli.tags : ['Novo'],
       totalVisits: 0,
       totalSpent: 0,
@@ -2514,6 +2549,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       );
     }
 
+    // Atualiza status da fila virtual caso este atendimento seja originário de encaixe
+    setQueueItems((prev) =>
+      prev.map((q) => {
+        if (q.comandaId === id && q.status === 'em_atendimento') {
+          const completedQueue: VirtualQueueItem = {
+            ...q,
+            status: 'concluido',
+            completedAt: new Date().toISOString(),
+          };
+          syncQueueItemToFirestore(completedQueue).catch(console.warn);
+          return completedQueue;
+        }
+        return q;
+      })
+    );
+
     addNotification({
       title: 'Comanda recebida',
       message: `Recebimento de R$ ${(targetComanda?.total || 0).toFixed(2)} via ${paymentMethod.toUpperCase()} confirmado.`,
@@ -2535,6 +2586,269 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       time: 'Agora',
     };
     setNotifications((prev) => [newItem, ...prev]);
+  };
+
+  // Virtual Queue Operations
+  const addToQueue = async (data: {
+    clientName: string;
+    clientPhone?: string;
+    serviceId: string;
+    professionalId?: string;
+    anyProfessional: boolean;
+    clientId?: string;
+    notes?: string;
+  }): Promise<VirtualQueueItem> => {
+    const srv = activeServices.find((s) => s.id === data.serviceId);
+    const serviceName = srv ? srv.name : 'Serviço';
+    const serviceDuration = srv ? srv.durationMinutes : 30;
+    const servicePrice = srv ? srv.price : 0;
+
+    let targetPro = data.professionalId
+      ? activeProfessionals.find((p) => p.id === data.professionalId)
+      : undefined;
+
+    // Gerar número de senha inteligente (ex: inicial do serviço + sequencial do dia)
+    const prefix = (serviceName.charAt(0) || 'A').toUpperCase();
+    const todayStr = getTodayDateString();
+    const todayQueueCount = activeQueueItems.filter((q) => q.joinedAt && q.joinedAt.startsWith(todayStr)).length + 1;
+    const ticketNumber = `${prefix}${todayQueueCount.toString().padStart(2, '0')}`;
+
+    // Estimar tempo de espera inteligente baseado nos atendimentos aguardando e chamados
+    const waitingItems = activeQueueItems.filter(
+      (q) => q.status === 'aguardando' || q.status === 'chamado' || q.status === 'em_atendimento'
+    );
+
+    const queueAhead = data.anyProfessional
+      ? waitingItems
+      : waitingItems.filter(
+          (q) =>
+            q.assignedProfessionalId === data.professionalId ||
+            q.professionalId === data.professionalId
+        );
+
+    // Média de duração dos serviços do profissional selecionado
+    let avgProDuration = serviceDuration;
+    if (data.professionalId) {
+      const proServices = activeServices.filter(
+        (s) =>
+          s.active !== false &&
+          (!s.allowedProfessionalIds?.length || s.allowedProfessionalIds.includes(data.professionalId!))
+      );
+      if (proServices.length > 0) {
+        avgProDuration = Math.round(
+          proServices.reduce((sum, s) => sum + (s.durationMinutes || 30), 0) / proServices.length
+        );
+      }
+    }
+
+    const estimatedWaitMinutes = queueAhead.reduce((acc, curr) => {
+      const durationToUse = data.professionalId ? avgProDuration : curr.serviceDuration;
+      if (curr.status === 'em_atendimento') {
+        return acc + Math.max(5, Math.round(durationToUse / 2));
+      }
+      return acc + durationToUse;
+    }, 0);
+
+    // Checagem de prioridade e janelas (gaps) com agendamentos do dia
+    let priorityAlert: 'normal' | 'gap_curto' | 'proximo_de_agendamento' = 'normal';
+    if (targetPro) {
+      const now = new Date();
+      const currentHours = now.getHours();
+      const currentMins = now.getMinutes();
+      const nowMinutes = currentHours * 60 + currentMins;
+
+      // Agendamentos futuros hoje para este profissional
+      const proTodayApps = activeAppointments.filter((a) => {
+        if (a.date !== todayStr || a.professionalId !== targetPro!.id || a.status === 'cancelado') return false;
+        const [h, m] = a.startTime.split(':').map(Number);
+        const appMinutes = h * 60 + m;
+        return appMinutes >= nowMinutes;
+      });
+
+      if (proTodayApps.length > 0) {
+        const nextApp = proTodayApps.sort((a, b) => a.startTime.localeCompare(b.startTime))[0];
+        const [ah, am] = nextApp.startTime.split(':').map(Number);
+        const nextAppMinutes = ah * 60 + am;
+        const availableWindow = nextAppMinutes - nowMinutes;
+
+        if (availableWindow < serviceDuration + 10) {
+          priorityAlert = 'gap_curto';
+        }
+      }
+    }
+
+    const newItem: VirtualQueueItem = {
+      id: `queue_${Date.now()}`,
+      businessId: currentBusiness?.id || '',
+      tenant_id: currentBusiness?.id || '',
+      ticketNumber,
+      clientId: data.clientId,
+      clientName: data.clientName.trim(),
+      clientPhone: data.clientPhone?.trim(),
+      serviceId: data.serviceId,
+      serviceName,
+      serviceDuration,
+      servicePrice,
+      professionalId: targetPro?.id,
+      professionalName: targetPro?.name,
+      anyProfessional: data.anyProfessional,
+      status: 'aguardando',
+      estimatedWaitMinutes,
+      priorityAlert,
+      joinedAt: new Date().toISOString(),
+      notes: data.notes?.trim(),
+    };
+
+    setQueueItems((prev) => [newItem, ...prev]);
+    await syncQueueItemToFirestore(newItem);
+
+    addNotification({
+      title: `Senha ${ticketNumber} Gerada`,
+      message: `${newItem.clientName} entrou na fila para ${serviceName} (${targetPro ? targetPro.name : 'Qualquer profissional'}).`,
+      type: 'booking',
+    });
+
+    return newItem;
+  };
+
+  const callQueueTicket = async (id: string): Promise<boolean> => {
+    const item = queueItems.find((q) => q.id === id);
+    if (!item) return false;
+
+    const updated: VirtualQueueItem = {
+      ...item,
+      status: 'chamado',
+      calledAt: new Date().toISOString(),
+    };
+
+    setQueueItems((prev) => prev.map((q) => (q.id === id ? updated : q)));
+    await syncQueueItemToFirestore(updated);
+
+    addNotification({
+      title: `Chamando Senha ${item.ticketNumber}`,
+      message: `${item.clientName} chamado(a) ao atendimento para ${item.serviceName}.`,
+      type: 'system',
+    });
+
+    return true;
+  };
+
+  const startQueueAttendance = async (
+    id: string,
+    assignedProId?: string
+  ): Promise<{ success: boolean; comandaId?: string }> => {
+    const item = queueItems.find((q) => q.id === id);
+    if (!item) return { success: false };
+
+    let chosenPro: Professional | undefined;
+    if (assignedProId) {
+      chosenPro = activeProfessionals.find((p) => p.id === assignedProId);
+    } else if (item.professionalId) {
+      chosenPro = activeProfessionals.find((p) => p.id === item.professionalId);
+    }
+
+    if (!chosenPro) {
+      chosenPro = activeProfessionals[0];
+    }
+
+    if (!chosenPro) {
+      return { success: false };
+    }
+
+    // Abertura automática de comanda vinculada ao profissional ao iniciar o atendimento
+    const newComandaId = `cmd_${Date.now()}`;
+    const newComanda: Comanda = {
+      id: newComandaId,
+      businessId: currentBusiness?.id || '',
+      tenant_id: currentBusiness?.id || '',
+      clientName: item.clientName,
+      clientPhone: item.clientPhone || '',
+      professionalId: chosenPro.id,
+      professionalName: chosenPro.name,
+      items: [
+        {
+          id: `item_${Date.now()}`,
+          name: item.serviceName,
+          type: 'servico',
+          price: item.servicePrice,
+          quantity: 1,
+        },
+      ],
+      subtotal: item.servicePrice,
+      discount: 0,
+      total: item.servicePrice,
+      status: 'aberta',
+      createdAt: new Date().toISOString(),
+    };
+
+    await syncComandaToFirestore(newComanda);
+    setComandas((prev) => [newComanda, ...prev]);
+
+    const updated: VirtualQueueItem = {
+      ...item,
+      status: 'em_atendimento',
+      startedAt: new Date().toISOString(),
+      assignedProfessionalId: chosenPro.id,
+      assignedProfessionalName: chosenPro.name,
+      comandaId: newComandaId,
+    };
+
+    setQueueItems((prev) => prev.map((q) => (q.id === id ? updated : q)));
+    await syncQueueItemToFirestore(updated);
+
+    addNotification({
+      title: `Atendimento Iniciado: Senha ${item.ticketNumber}`,
+      message: `${item.clientName} em atendimento com ${chosenPro.name}. Comanda aberta.`,
+      type: 'booking',
+    });
+
+    return { success: true, comandaId: newComandaId };
+  };
+
+  const finishQueueAttendance = async (id: string): Promise<boolean> => {
+    const item = queueItems.find((q) => q.id === id);
+    if (!item) return false;
+
+    const updated: VirtualQueueItem = {
+      ...item,
+      status: 'concluido',
+      completedAt: new Date().toISOString(),
+    };
+
+    setQueueItems((prev) => prev.map((q) => (q.id === id ? updated : q)));
+    await syncQueueItemToFirestore(updated);
+
+    addNotification({
+      title: `Atendimento Concluído: Senha ${item.ticketNumber}`,
+      message: `${item.clientName} finalizou atendimento. Comanda pronta no Caixa.`,
+      type: 'system',
+    });
+
+    return true;
+  };
+
+  const cancelQueueTicket = async (
+    id: string,
+    reason: 'desistiu' | 'cancelado' = 'cancelado'
+  ): Promise<boolean> => {
+    const item = queueItems.find((q) => q.id === id);
+    if (!item) return false;
+
+    const updated: VirtualQueueItem = {
+      ...item,
+      status: reason,
+    };
+
+    setQueueItems((prev) => prev.map((q) => (q.id === id ? updated : q)));
+    await syncQueueItemToFirestore(updated);
+
+    addNotification({
+      title: `Senha ${item.ticketNumber} ${reason === 'desistiu' ? 'Desistiu' : 'Cancelada'}`,
+      message: `${item.clientName} removido(a) da fila virtual.`,
+      type: 'system',
+    });
+
+    return true;
   };
 
   const userRole: RoleType =
@@ -2680,6 +2994,20 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setIsNewStudioModalOpen,
         isPlansModalOpen,
         setIsPlansModalOpen,
+
+        // Virtual Queue & Reception TV
+        queueItems,
+        activeQueueItems,
+        addToQueue,
+        callQueueTicket,
+        startQueueAttendance,
+        finishQueueAttendance,
+        cancelQueueTicket,
+        isNewQueueModalOpen,
+        setIsNewQueueModalOpen,
+
+        clearAllMockData,
+        resetCurrentTenantData,
       }}
     >
       {children}

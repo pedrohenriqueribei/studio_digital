@@ -3,10 +3,12 @@ export * from './rbac';
 export type AppTab =
   | 'dashboard'
   | 'agenda'
+  | 'fila'
   | 'servicos'
   | 'profissionais'
   | 'comandas'
   | 'clientes'
+  | 'relatorios'
   | 'planos'
   | 'configuracoes';
 
@@ -44,9 +46,15 @@ export interface Business {
   status: TenantStatus;
   createdAt: string;
   monthlyRevenue?: number;
+  monthlyRevenueGoal?: number;
   managerName?: string;
   managerEmail?: string;
   managerPassword?: string;
+  address?: string;
+  neighborhood?: string;
+  zipCode?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface PlatformAdminUser {
@@ -195,6 +203,8 @@ export interface ClientPreferences {
 
 export type ClientTagPreset = 'VIP' | 'Novo' | 'Recorrente' | 'Com débito';
 
+export type ClientProfileStatus = 'Completo' | 'A Completar';
+
 export interface Client {
   id: string;
   businessId: string;
@@ -217,8 +227,17 @@ export interface Client {
   tags?: string[]; // Segmentação rápida: 'VIP', 'Novo', 'Recorrente', 'Com débito'
   preferences?: ClientPreferences;
   importantNotes?: ClientNote[];
+  status?: ClientProfileStatus | string;
+  profileStatus?: ClientProfileStatus;
   createdAt?: string;
   updatedAt?: string;
+  address?: string;
+  neighborhood?: string;
+  city?: string;
+  state?: string;
+  zipCode?: string;
+  latitude?: number;
+  longitude?: number;
 }
 
 export interface ClientRegistrationData {
@@ -231,6 +250,7 @@ export interface ClientRegistrationData {
   confirmPassword?: string;
   photoURL?: string;
   businessId?: string;
+  existingClientId?: string;
 }
 
 export interface ComandaItem {
@@ -268,3 +288,40 @@ export interface NotificationItem {
   read: boolean;
   type: 'booking' | 'payment' | 'system' | 'reminder';
 }
+
+export type VirtualQueueStatus =
+  | 'aguardando'      // Na fila de espera
+  | 'chamado'         // Chamado no painel / TV
+  | 'em_atendimento'  // Procedimento em andamento (comanda aberta)
+  | 'concluido'       // Finalizado
+  | 'desistiu'        // Cliente desistiu
+  | 'cancelado';      // Cancelado pela recepção
+
+export interface VirtualQueueItem {
+  id: string;
+  businessId: string;
+  tenant_id?: string;
+  ticketNumber: string;            // Ex: "A01", "B02", "S03"
+  clientId?: string;               // Se for cliente cadastrado
+  clientName: string;
+  clientPhone?: string;
+  serviceId: string;
+  serviceName: string;
+  serviceDuration: number;         // Em minutos
+  servicePrice: number;
+  professionalId?: string;         // Profissional desejado pelo cliente
+  professionalName?: string;
+  anyProfessional: boolean;        // Se aceita qualquer profissional disponível
+  assignedProfessionalId?: string; // Profissional que efetivamente assumiu o atendimento
+  assignedProfessionalName?: string;
+  status: VirtualQueueStatus;
+  estimatedWaitMinutes: number;
+  priorityAlert?: 'normal' | 'gap_curto' | 'proximo_de_agendamento';
+  joinedAt: string;                // ISO
+  calledAt?: string;               // ISO
+  startedAt?: string;              // ISO
+  completedAt?: string;            // ISO
+  comandaId?: string;              // ID da comanda aberta no Caixa
+  notes?: string;
+}
+

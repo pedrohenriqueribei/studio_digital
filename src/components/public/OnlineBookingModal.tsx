@@ -16,9 +16,13 @@ import {
   ExternalLink,
   MessageCircle,
   AlertTriangle,
+  Search,
+  Filter,
+  Tag,
 } from 'lucide-react';
 import { Professional, Service, Business, Appointment } from '../../types';
 import { getProfessionalScheduleForDate, checkAppointmentConflict } from '../../utils/availability';
+import { maskPhone } from '../../utils/masks';
 
 interface OnlineBookingModalProps {
   isOpen: boolean;
@@ -71,6 +75,9 @@ export const OnlineBookingModal: React.FC<OnlineBookingModalProps> = ({
     initialServiceId || (services[0]?.id ?? '')
   );
 
+  const [serviceSearchQuery, setServiceSearchQuery] = useState('');
+  const [selectedCategory, setSelectedCategory] = useState<string>('all');
+
   // Default to tomorrow or today if within work hours
   const todayStr = useMemo(() => new Date().toISOString().split('T')[0], []);
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
@@ -112,6 +119,31 @@ export const OnlineBookingModal: React.FC<OnlineBookingModalProps> = ({
   const selectedService = useMemo(() => {
     return applicableServices.find((s) => s.id === selectedServiceId) || applicableServices[0] || services[0];
   }, [applicableServices, services, selectedServiceId]);
+
+  const categories = useMemo(() => {
+    const set = new Set<string>();
+    applicableServices.forEach((s) => {
+      if (s.category) set.add(s.category.trim());
+    });
+    return Array.from(set).sort();
+  }, [applicableServices]);
+
+  const filteredApplicableServices = useMemo(() => {
+    let list = applicableServices;
+    if (selectedCategory !== 'all') {
+      list = list.filter((s) => s.category?.toLowerCase() === selectedCategory.toLowerCase());
+    }
+    const q = serviceSearchQuery.toLowerCase().trim();
+    if (q) {
+      list = list.filter(
+        (s) =>
+          s.name.toLowerCase().includes(q) ||
+          s.category?.toLowerCase().includes(q) ||
+          s.description?.toLowerCase().includes(q)
+      );
+    }
+    return list;
+  }, [applicableServices, selectedCategory, serviceSearchQuery]);
 
   // Generate next 14 available days for the picker
   const availableDays = useMemo(() => {
@@ -441,7 +473,7 @@ export const OnlineBookingModal: React.FC<OnlineBookingModalProps> = ({
             </div>
           )}
 
-          {/* STEP 1: Seleção de Serviço */}
+          {/* STEP 1: Seleção de Serviço com Busca e Categorias */}
           {step === 1 && (
             <div className="space-y-4">
               <div>
@@ -449,17 +481,68 @@ export const OnlineBookingModal: React.FC<OnlineBookingModalProps> = ({
                   Escolha o serviço desejado
                 </h4>
                 <p className="text-xs text-slate-500">
-                  Valores e durações praticados por {professional.name}
+                  Valores e durações praticados por {professional.name} em {business.tradeName}
                 </p>
               </div>
 
+              {/* Input de Busca Rápida */}
+              <div className="relative">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={serviceSearchQuery}
+                  onChange={(e) => setServiceSearchQuery(e.target.value)}
+                  placeholder="Buscar serviço por nome ou especialidade..."
+                  className="w-full pl-9 pr-8 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-amber-500 bg-white"
+                />
+                {serviceSearchQuery && (
+                  <button
+                    onClick={() => setServiceSearchQuery('')}
+                    className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                )}
+              </div>
+
+              {/* Categorias */}
+              {categories.length > 1 && (
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCategory('all')}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                      selectedCategory === 'all'
+                        ? 'bg-slate-900 text-white'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    Todos ({applicableServices.length})
+                  </button>
+                  {categories.map((cat) => (
+                    <button
+                      key={cat}
+                      type="button"
+                      onClick={() => setSelectedCategory(cat)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors cursor-pointer ${
+                        selectedCategory === cat
+                          ? 'bg-amber-600 text-white'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              )}
+
               <div className="space-y-2.5">
-                {applicableServices.length === 0 && (
+                {filteredApplicableServices.length === 0 && (
                   <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl text-center text-xs text-slate-500">
-                    Nenhum serviço disponível com este profissional no momento.
+                    Nenhum serviço encontrado com os filtros atuais.
                   </div>
                 )}
-                {applicableServices.map((srv) => {
+                {filteredApplicableServices.map((srv) => {
                   const isSelected = srv.id === selectedServiceId;
                   return (
                     <div
@@ -476,6 +559,11 @@ export const OnlineBookingModal: React.FC<OnlineBookingModalProps> = ({
                           <h5 className="text-sm font-bold text-slate-900 truncate">
                             {srv.name}
                           </h5>
+                          {srv.category && (
+                            <span className="text-[10px] font-semibold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">
+                              {srv.category}
+                            </span>
+                          )}
                           <span className="text-[11px] text-slate-400 font-medium">
                             · {srv.durationMinutes} min
                           </span>
@@ -691,7 +779,7 @@ export const OnlineBookingModal: React.FC<OnlineBookingModalProps> = ({
                       required
                       placeholder="(11) 98765-4321"
                       value={clientPhone}
-                      onChange={(e) => setClientPhone(e.target.value)}
+                      onChange={(e) => setClientPhone(maskPhone(e.target.value))}
                       className="w-full pl-9 pr-3 py-2.5 text-xs bg-white border border-slate-200 rounded-xl text-slate-900 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 font-mono"
                     />
                   </div>

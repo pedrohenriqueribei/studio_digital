@@ -32,6 +32,16 @@ export function timeToMinutes(timeStr: string): number {
 }
 
 /**
+ * Converte total de minutos em string "HH:mm".
+ */
+export function minutesToTime(totalMinutes: number): string {
+  const clamped = Math.max(0, Math.min(24 * 60 - 1, Math.round(totalMinutes)));
+  const h = Math.floor(clamped / 60);
+  const m = clamped % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+/**
  * Verifica se dois intervalos de horário [startA, endA) e [startB, endB) se sobrepõem.
  * Regra: startA < endB && endA > startB
  */

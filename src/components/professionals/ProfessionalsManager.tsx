@@ -25,6 +25,7 @@ import { useApp } from '../../context/AppContext';
 import { Professional, UserRole } from '../../types';
 import { slugify } from '../../utils/slugify';
 import { MaskedInput } from '../ui/MaskedInput';
+import { maskPhone } from '../../utils/masks';
 
 export const ProfessionalsManager: React.FC = () => {
   const {
@@ -259,7 +260,7 @@ export const ProfessionalsManager: React.FC = () => {
                 <div className="space-y-1 text-xs text-slate-500 mb-4">
                   <div className="flex items-center gap-2">
                     <Phone className="w-3.5 h-3.5 text-slate-400" />
-                    <span>{pro.phone}</span>
+                    <span className="font-mono">{maskPhone(pro.phone) || 'Sem telefone'}</span>
                   </div>
                   <div className="flex items-center gap-2">
                     <Mail className="w-3.5 h-3.5 text-slate-400" />
