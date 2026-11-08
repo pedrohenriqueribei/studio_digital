@@ -374,9 +374,9 @@ export const ProfessionalsManager: React.FC = () => {
 
       {/* Add / Edit Professional Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/60">
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg max-h-[92vh] flex flex-col my-auto overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/80 shrink-0 sticky top-0 z-10 bg-white/95 backdrop-blur-xs">
               <h3 className="text-base font-bold text-slate-900">
                 {editingPro ? 'Editar Profissional' : 'Cadastrar Membro da Equipe'}
               </h3>
@@ -388,7 +388,10 @@ export const ProfessionalsManager: React.FC = () => {
               </button>
             </div>
 
-            <form onSubmit={handleSubmit} className="p-6 space-y-4">
+            <form
+              onSubmit={handleSubmit}
+              className="professionals-modal-form-container p-6 pb-8 space-y-4 overflow-y-auto flex-1 overscroll-contain [overscroll-behavior:contain]"
+            >
               <div>
                 <label className="text-xs font-semibold text-slate-700 block mb-1">
                   Nome Completo
@@ -551,7 +554,7 @@ export const ProfessionalsManager: React.FC = () => {
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 sticky bottom-0 bg-white/95 backdrop-blur-xs z-10 -mx-6 -mb-6 px-6 pb-6 mt-4">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
