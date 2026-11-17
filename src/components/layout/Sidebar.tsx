@@ -48,6 +48,7 @@ export const Sidebar: React.FC = () => {
     superAdminUser,
     setIsLoginModalOpen,
     businesses,
+    managedBusinesses,
     professionals,
     services,
     saasPlans,
@@ -114,6 +115,12 @@ export const Sidebar: React.FC = () => {
       id: 'relatorios',
       label: 'Relatórios & Métricas',
       icon: BarChart3,
+    },
+    {
+      id: 'unidades',
+      label: 'Multi-Unidades',
+      icon: Building2,
+      badge: managedBusinesses.length > 1 ? managedBusinesses.length : undefined,
     },
     {
       id: 'planos',

@@ -22,6 +22,7 @@ import {
   SaaSPlan,
   Review,
   VirtualQueueItem,
+  LoyaltyMilestoneNotification,
 } from '../types';
 
 export enum OperationType {
@@ -108,11 +109,17 @@ export async function syncBusinessToFirestore(business: Business): Promise<boole
       managerName: business.managerName ?? null,
       managerEmail: business.managerEmail ?? null,
       managerPassword: business.managerPassword ?? null,
+      ownerEmail: business.ownerEmail ?? null,
+      ownerName: business.ownerName ?? null,
+      isHeadquarters: business.isHeadquarters ?? false,
+      unitCode: business.unitCode ?? null,
+      parentId: business.parentId ?? null,
       address: business.address ?? null,
       neighborhood: business.neighborhood ?? null,
       zipCode: business.zipCode ?? null,
       latitude: business.latitude ?? null,
       longitude: business.longitude ?? null,
+      loyaltyConfig: business.loyaltyConfig ?? null,
     };
 
     // Remove any undefined values to avoid Firestore serialization errors
@@ -511,6 +518,32 @@ export async function deleteQueueItemFromFirestore(itemId: string): Promise<bool
 }
 
 /**
+ * Salva ou atualiza uma Notificação de Marco de Fidelidade (50% / 90%) no Firestore.
+ */
+export async function syncLoyaltyNotificationToFirestore(
+  notif: LoyaltyMilestoneNotification
+): Promise<boolean> {
+  const docPath = `notifications/${notif.id}`;
+  try {
+    const cleanDoc: Record<string, any> = { ...notif };
+    Object.keys(cleanDoc).forEach((key) => {
+      if (cleanDoc[key] === undefined) {
+        delete cleanDoc[key];
+      }
+    });
+    if (!cleanDoc.tenant_id && cleanDoc.businessId) {
+      cleanDoc.tenant_id = cleanDoc.businessId;
+    }
+    await setDoc(doc(db, 'notifications', notif.id), cleanDoc, { merge: true });
+    return true;
+  } catch (err) {
+    console.warn('Erro ao salvar notificação de fidelidade no Firestore:', err);
+    handleFirestoreError(err, OperationType.WRITE, docPath);
+    return false;
+  }
+}
+
+/**
  * Remove todos os dados de mock / demonstração legados do Firestore.
  * Garante que a base permaneça limpa e sem dados simulados.
  */
@@ -665,7 +698,7 @@ export async function purgeAllMockDataFromFirestore(): Promise<{
  * Zera todos os dados operacionais (clientes, agendamentos, comandas e serviços) de um tenant específico.
  */
 export async function resetTenantDataToZero(businessId: string): Promise<void> {
-  const collections = ['appointments', 'comandas', 'clients', 'reviews', 'virtualQueue'];
+  const collections = ['appointments', 'comandas', 'clients', 'reviews', 'virtualQueue', 'notifications'];
   for (const col of collections) {
     try {
       const snap = await getDocs(collection(db, col));

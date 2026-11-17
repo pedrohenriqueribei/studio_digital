@@ -31,12 +31,19 @@ import { getTodayDateString } from '../../utils/date';
 import { slugify } from '../../utils/slugify';
 import { ClientsManager } from '../clients/ClientsManager';
 import { getClientTagConfig } from '../../utils/clientTags';
+import {
+  computeProfessionalMonthMetrics,
+  getComandaProfessionalSplit,
+  resolveItemCommissionPercentage,
+} from '../../utils/commissions';
 
 export const ProfessionalPortal: React.FC = () => {
   const {
     currentBusiness,
     currentProfessional,
     activeAppointments,
+    activeComandas,
+    activeProfessionals,
     updateAppointmentStatus,
     openNewAppointmentModal,
     navigateTo,
@@ -93,26 +100,39 @@ export const ProfessionalPortal: React.FC = () => {
     }).sort((a, b) => a.startTime.localeCompare(b.startTime));
   }, [activeAppointments, currentProfessional, dateFilter, statusFilter, todayStr, tomorrowStr]);
 
-  // Performance and Commission metrics for this professional
+  // Performance and Commission metrics for this professional (reconciling unified comandas + service rates)
   const stats = useMemo(() => {
     if (!currentProfessional) {
       return { totalAppointments: 0, completed: 0, grossRevenue: 0, myCommissions: 0, rate: 0 };
     }
 
+    const currentMonthPrefix = new Date().toISOString().slice(0, 7);
     const proApps = activeAppointments.filter((a) => a.professionalId === currentProfessional.id);
-    const completedApps = proApps.filter((a) => a.status === 'concluido');
-    const grossRevenue = completedApps.reduce((acc, a) => acc + (a.price || 0), 0);
-    const rate = currentProfessional.commissionPercentage || 50;
-    const myCommissions = (grossRevenue * rate) / 100;
+    const monthApps = proApps.filter((a) => a.date.startsWith(currentMonthPrefix) && a.status !== 'cancelado');
+    const completedApps = monthApps.filter((a) => a.status === 'concluido' || a.paymentStatus === 'pago');
+
+    const monthMetrics = computeProfessionalMonthMetrics(
+      currentProfessional.id,
+      activeComandas,
+      activeAppointments,
+      activeServices,
+      activeProfessionals,
+      currentMonthPrefix
+    );
+
+    const effectiveRate =
+      monthMetrics.grossRevenue > 0
+        ? Math.round((monthMetrics.commissionEarnings / monthMetrics.grossRevenue) * 100)
+        : currentProfessional.commissionPercentage || 40;
 
     return {
-      totalAppointments: proApps.length,
+      totalAppointments: monthApps.length > 0 ? monthApps.length : proApps.length,
       completed: completedApps.length,
-      grossRevenue,
-      myCommissions,
-      rate,
+      grossRevenue: monthMetrics.grossRevenue,
+      myCommissions: monthMetrics.commissionEarnings,
+      rate: effectiveRate,
     };
-  }, [activeAppointments, currentProfessional]);
+  }, [activeAppointments, activeComandas, activeServices, activeProfessionals, currentProfessional]);
 
   const proSlug = currentProfessional?.slug || (currentProfessional ? slugify(currentProfessional.name) : '');
   const publicBookingUrl = typeof window !== 'undefined'
@@ -325,7 +345,7 @@ export const ProfessionalPortal: React.FC = () => {
                 R$ {stats.myCommissions.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </p>
               <div className="flex items-center gap-1 text-[11px] text-emerald-600 font-semibold mt-1">
-                <span>{stats.rate}% de comissão cadastrada</span>
+                <span>Média efetiva de {stats.rate}% (rateio de comandas + serviços)</span>
               </div>
             </div>
 
@@ -338,7 +358,7 @@ export const ProfessionalPortal: React.FC = () => {
                 {stats.completed}
               </p>
               <span className="text-[11px] text-slate-500">
-                De {stats.totalAppointments} agendamentos totais
+                De {stats.totalAppointments} agendamentos no mês
               </span>
             </div>
 
@@ -350,7 +370,7 @@ export const ProfessionalPortal: React.FC = () => {
               <p className="text-2xl font-extrabold text-slate-900 font-mono tabular-nums">
                 R$ {stats.grossRevenue.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </p>
-              <span className="text-[11px] text-slate-500">Valor bruto dos serviços</span>
+              <span className="text-[11px] text-slate-500">Sua fatia líquida realizada no mês</span>
             </div>
 
             <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs">
@@ -453,6 +473,46 @@ export const ProfessionalPortal: React.FC = () => {
                     c.name.toLowerCase() === app.clientName.toLowerCase()
                 );
                 const hasAllergies = matchedClient?.preferences?.allergies && matchedClient.preferences.allergies.length > 0;
+                const linkedComanda = activeComandas.find(
+                  (c) =>
+                    c.status !== 'cancelada' &&
+                    (c.id === app.comandaId ||
+                      c.appointmentId === app.id ||
+                      c.appointmentIds?.includes(app.id) ||
+                      c.items?.some((it) => it.appointmentId === app.id))
+                );
+                const srv = activeServices.find((s) => s.id === app.serviceId);
+                let appCommissionRate = srv?.commissionPercentage ?? currentProfessional.commissionPercentage ?? 40;
+                let appCommissionAmount = ((app.price || 0) * appCommissionRate) / 100;
+
+                if (linkedComanda) {
+                  if (linkedComanda.status === 'fechada') {
+                    const split = getComandaProfessionalSplit(linkedComanda, activeServices, activeProfessionals);
+                    const matchedBd = split.itemsBreakdown.find(
+                      (bd) => bd.item.appointmentId === app.id && bd.professionalId === currentProfessional.id
+                    );
+                    if (matchedBd) {
+                      appCommissionRate = matchedBd.commissionPercentage;
+                      appCommissionAmount = matchedBd.commissionAmount;
+                    }
+                  } else {
+                    const openItem = linkedComanda.items?.find(
+                      (it) => it.appointmentId === app.id && it.professionalId === currentProfessional.id
+                    );
+                    if (openItem) {
+                      appCommissionRate = resolveItemCommissionPercentage(
+                        openItem,
+                        activeServices,
+                        activeProfessionals,
+                        currentProfessional.id
+                      );
+                      appCommissionAmount =
+                        ((openItem.price || 0) * (openItem.quantity || 1) * appCommissionRate) / 100;
+                    }
+                  }
+                }
+
+                const isUnifiedMultiStep = (app.groupTotalServices ?? 1) > 1;
 
                 return (
                   <div
@@ -477,6 +537,14 @@ export const ProfessionalPortal: React.FC = () => {
                             <BadgeIcon className="w-3 h-3" />
                             <span>{badge.label}</span>
                           </span>
+                          {isUnifiedMultiStep && (
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md border border-indigo-200 bg-indigo-50 text-indigo-700 text-[10px] font-bold">
+                              <Layers className="w-2.5 h-2.5" />
+                              <span>
+                                Etapa {app.groupServiceIndex || 1}/{app.groupTotalServices} · Comanda unificada
+                              </span>
+                            </span>
+                          )}
 
                           {/* Client Segmentation Tags */}
                           {matchedClient?.tags && matchedClient.tags.length > 0 && (
@@ -566,8 +634,8 @@ export const ProfessionalPortal: React.FC = () => {
                         <span className="text-xs font-bold text-slate-900 font-mono block">
                           R$ {app.price.toFixed(2)}
                         </span>
-                        <span className="text-[10px] text-emerald-600 font-medium">
-                          Sua comissão: R$ {((app.price * (currentProfessional.commissionPercentage || 50)) / 100).toFixed(2)}
+                        <span className="text-[10px] text-emerald-600 font-medium font-mono">
+                          Sua comissão ({appCommissionRate}%): R$ {appCommissionAmount.toFixed(2)}
                         </span>
                       </div>
 
@@ -617,7 +685,7 @@ export const ProfessionalPortal: React.FC = () => {
                         <button
                           onClick={() => {
                             if (confirm('Deseja marcar este agendamento como cancelado?')) {
-                              updateAppointmentStatus(app.id, 'cancelado');
+                              updateAppointmentStatus(app.id, 'cancelado', 'Cancelado pelo profissional responsável');
                             }
                           }}
                           className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"

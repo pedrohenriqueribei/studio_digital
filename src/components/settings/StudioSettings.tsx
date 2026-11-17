@@ -18,10 +18,13 @@ import {
   Phone,
   Trash2,
   AlertTriangle,
+  Award,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { ProfessionalAvailabilitySettings } from './ProfessionalAvailabilitySettings';
 import { MaskedInput } from '../ui/MaskedInput';
+import { getBusinessLoyaltyConfig } from '../../utils/loyalty';
+import { LoyaltyNotificationChannel } from '../../types';
 
 export const StudioSettings: React.FC = () => {
   const {
@@ -74,6 +77,17 @@ export const StudioSettings: React.FC = () => {
   );
   const [showManagerPassword, setShowManagerPassword] = useState(false);
   const [autoWhatsapp, setAutoWhatsapp] = useState(true);
+  const initialLoyalty = getBusinessLoyaltyConfig(currentBusiness);
+  const [loyaltyEnabled, setLoyaltyEnabled] = useState(initialLoyalty.enabled);
+  const [loyaltyPointsPerService, setLoyaltyPointsPerService] = useState(initialLoyalty.pointsPerService);
+  const [loyaltyRewardThreshold, setLoyaltyRewardThreshold] = useState(initialLoyalty.rewardThreshold);
+  const [loyaltyRewardTitle, setLoyaltyRewardTitle] = useState(initialLoyalty.rewardTitle);
+  const [milestoneNotifsEnabled, setMilestoneNotifsEnabled] = useState(
+    initialLoyalty.milestoneNotificationsEnabled !== false
+  );
+  const [notifChannel, setNotifChannel] = useState<LoyaltyNotificationChannel>(
+    initialLoyalty.notificationChannels || 'both'
+  );
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Synchronize when current business changes
@@ -92,6 +106,13 @@ export const StudioSettings: React.FC = () => {
           `gerente@${currentBusiness.tradeName.toLowerCase().replace(/\s+/g, '')}.com`
       );
       setManagerPassword(currentBusiness.managerPassword || '');
+      const lCfg = getBusinessLoyaltyConfig(currentBusiness);
+      setLoyaltyEnabled(lCfg.enabled);
+      setLoyaltyPointsPerService(lCfg.pointsPerService);
+      setLoyaltyRewardThreshold(lCfg.rewardThreshold);
+      setLoyaltyRewardTitle(lCfg.rewardTitle);
+      setMilestoneNotifsEnabled(lCfg.milestoneNotificationsEnabled !== false);
+      setNotifChannel(lCfg.notificationChannels || 'both');
     }
   }, [currentBusiness?.id]);
 
@@ -107,11 +128,19 @@ export const StudioSettings: React.FC = () => {
       managerName,
       managerEmail,
       managerPassword,
+      loyaltyConfig: {
+        enabled: loyaltyEnabled,
+        pointsPerService: Math.max(1, Math.min(50, Number(loyaltyPointsPerService) || 1)),
+        rewardThreshold: Math.max(2, Math.min(100, Number(loyaltyRewardThreshold) || 10)),
+        rewardTitle: loyaltyRewardTitle.trim() || '1 Serviço Grátis à escolha',
+        milestoneNotificationsEnabled: milestoneNotifsEnabled,
+        notificationChannels: notifChannel,
+      },
     });
     setSaveSuccess(true);
     addNotification({
       title: 'Configurações e Credenciais salvas',
-      message: 'Os dados do estabelecimento e o perfil do gerente foram atualizados.',
+      message: 'Os dados do estabelecimento, cartão fidelidade e perfil do gerente foram atualizados.',
       type: 'system',
     });
     setTimeout(() => setSaveSuccess(false), 3000);
@@ -344,6 +373,111 @@ export const StudioSettings: React.FC = () => {
                 </span>
               </div>
             </label>
+          </div>
+        </div>
+
+        {/* Virtual Loyalty Card Program Settings */}
+        <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-2xs space-y-4">
+          <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
+            <Award className="w-4 h-4 text-amber-600" />
+            <h3 className="text-sm font-bold text-slate-900">
+              Programa de Cartão Fidelidade Virtual
+            </h3>
+          </div>
+
+          <label className="flex items-start gap-3 p-3 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer transition-colors">
+            <input
+              type="checkbox"
+              checked={loyaltyEnabled}
+              onChange={(e) => setLoyaltyEnabled(e.target.checked)}
+              className="mt-0.5 rounded border-slate-300 text-slate-900 focus:ring-0"
+            />
+            <div>
+              <span className="text-xs font-bold text-slate-900 block">
+                Ativar Cartão Fidelidade Automático por Serviço Realizado
+              </span>
+              <span className="text-xs text-slate-500">
+                Cada serviço concluído na agenda, fila virtual ou comanda fechada acumula pontos automaticamente na ficha do cliente.
+              </span>
+            </div>
+          </label>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div>
+              <label className="text-xs font-semibold text-slate-700 block mb-1">
+                Pontos por Serviço
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                value={loyaltyPointsPerService}
+                onChange={(e) => setLoyaltyPointsPerService(Math.max(1, Number(e.target.value) || 1))}
+                className="w-full px-3 py-2 text-xs font-mono tabular-nums border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-700 block mb-1">
+                Meta de Pontos (Prêmio)
+              </label>
+              <input
+                type="number"
+                min={2}
+                max={100}
+                value={loyaltyRewardThreshold}
+                onChange={(e) => setLoyaltyRewardThreshold(Math.max(2, Number(e.target.value) || 10))}
+                className="w-full px-3 py-2 text-xs font-mono tabular-nums border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-semibold text-slate-700 block mb-1">
+                Descrição do Prêmio
+              </label>
+              <input
+                type="text"
+                maxLength={80}
+                value={loyaltyRewardTitle}
+                onChange={(e) => setLoyaltyRewardTitle(e.target.value)}
+                placeholder="Ex: 1 Serviço Grátis à escolha"
+                className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500"
+              />
+            </div>
+          </div>
+
+          <div className="pt-3 border-t border-slate-100 space-y-3">
+            <label className="flex items-start gap-3 p-3 rounded-lg border border-slate-200 hover:bg-slate-50 cursor-pointer transition-colors">
+              <input
+                type="checkbox"
+                checked={milestoneNotifsEnabled}
+                onChange={(e) => setMilestoneNotifsEnabled(e.target.checked)}
+                className="mt-0.5 rounded border-slate-300 text-slate-900 focus:ring-0"
+              />
+              <div>
+                <span className="text-xs font-bold text-slate-900 block">
+                  Disparar Alertas Automáticos aos 50% e 90% de Progresso
+                </span>
+                <span className="text-xs text-slate-500">
+                  Envia notificação Push no Portal do Cliente e/ou E-mail convidando o cliente a agendar um novo serviço quando atingir metade (50%) ou a reta final (90%) do cartão.
+                </span>
+              </div>
+            </label>
+
+            {milestoneNotifsEnabled && (
+              <div className="max-w-xs">
+                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  Canais de Disparo (50% e 90%)
+                </label>
+                <select
+                  value={notifChannel}
+                  onChange={(e) => setNotifChannel(e.target.value as LoyaltyNotificationChannel)}
+                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg bg-white text-slate-800 focus:outline-none focus:border-slate-500"
+                >
+                  <option value="both">Push + E-mail (Recomendado)</option>
+                  <option value="push">Apenas Push (Navegador &amp; Portal)</option>
+                  <option value="email">Apenas E-mail</option>
+                </select>
+              </div>
+            )}
           </div>
         </div>
 

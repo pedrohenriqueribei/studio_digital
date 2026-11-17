@@ -30,12 +30,18 @@ import {
   Legend,
   Cell,
 } from 'recharts';
-import { Appointment, Comanda, UserRole, Professional } from '../../types';
+import { Appointment, Comanda, UserRole, Professional, Service } from '../../types';
 import { getTodayDateString } from '../../utils/date';
+import {
+  comandaInvolvesProfessional,
+  getComandaRevenueForProfessional,
+} from '../../utils/commissions';
 
 interface WeeklyPerformanceChartProps {
   appointments: Appointment[];
   comandas: Comanda[];
+  services?: Service[];
+  professionals?: Professional[];
   currentRole: UserRole;
   currentProfessional: Professional | null;
   tradeName?: string;
@@ -49,6 +55,8 @@ type VolumeSubView = 'total' | 'status';
 export const WeeklyPerformanceChart: React.FC<WeeklyPerformanceChartProps> = ({
   appointments,
   comandas,
+  services = [],
+  professionals = [],
   currentRole,
   currentProfessional,
   tradeName = 'Studio',
@@ -117,16 +125,18 @@ export const WeeklyPerformanceChart: React.FC<WeeklyPerformanceChartProps> = ({
     return appointments;
   }, [appointments, currentRole, currentProfessional]);
 
-  // Filter comandas for the target professional if role is professional
+  // Filter comandas for the target professional if role is professional (including multi-pro unified comandas)
   const scopedComandas = useMemo(() => {
     if (currentRole === 'profissional' && currentProfessional) {
-      return comandas.filter((c) => c.professionalId === currentProfessional.id);
+      return comandas.filter((c) => comandaInvolvesProfessional(c, currentProfessional.id));
     }
     return comandas;
   }, [comandas, currentRole, currentProfessional]);
 
   // Aggregate daily metrics
   const chartData = useMemo(() => {
+    const isProView = currentRole === 'profissional' && Boolean(currentProfessional);
+
     return weekDays.map((day) => {
       // Appointments on this date
       const dayApps = scopedAppointments.filter((a) => a.date === day.dateStr);
@@ -146,7 +156,16 @@ export const WeeklyPerformanceChart: React.FC<WeeklyPerformanceChartProps> = ({
         return false;
       });
 
-      const comandaRevenue = dayComandas.reduce((sum, c) => sum + (c.total || 0), 0);
+      const comandaRevenue = dayComandas.reduce((sum, c) => {
+        if (isProView && currentProfessional) {
+          return (
+            sum +
+            getComandaRevenueForProfessional(c, currentProfessional.id, services, professionals)
+              .revenue
+          );
+        }
+        return sum + (c.total || 0);
+      }, 0);
 
       // Scheduled appointment revenue (non-cancelled)
       const scheduledRevenue = dayApps
@@ -179,7 +198,7 @@ export const WeeklyPerformanceChart: React.FC<WeeklyPerformanceChartProps> = ({
         ticketMedio,
       };
     });
-  }, [weekDays, scopedAppointments, scopedComandas]);
+  }, [weekDays, scopedAppointments, scopedComandas, currentRole, currentProfessional, services, professionals]);
 
   // Aggregate weekly KPIs
   const weeklySummary = useMemo(() => {

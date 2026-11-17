@@ -21,6 +21,11 @@ import {
 } from 'lucide-react';
 import { Appointment, Professional, Service, Comanda } from '../../types';
 import { formatCurrency } from '../../utils/availability';
+import {
+  getComandaEffectiveFactor,
+  getComandaRevenueForProfessional,
+  isAppointmentCoveredByClosedComanda,
+} from '../../utils/commissions';
 
 interface TopPerformersRankingProps {
   appointments: Appointment[];
@@ -81,15 +86,24 @@ export const TopPerformersRanking: React.FC<TopPerformersRankingProps> = ({
     );
   }, [appointments, currentMonthPrefix]);
 
-  // Se não houver dados reais no mês (ex: estúdio recém-criado), gera dados demonstrativos inteligentes
-  const hasRealMonthData = monthAppointments.length > 0;
+  // Comandas fechadas do mês de referência
+  const closedMonthComandas = useMemo(() => {
+    return comandas.filter((c) => {
+      if (c.status !== 'fechada') return false;
+      const dateStr = (c.closedAt || c.createdAt || '').slice(0, 7);
+      return dateStr === currentMonthPrefix;
+    });
+  }, [comandas, currentMonthPrefix]);
+
+  // Se não houver dados reais no mês (ex: estúdio recém-criado), exibe zerado
+  const hasRealMonthData = monthAppointments.length > 0 || closedMonthComandas.length > 0;
 
   // =========================================================================
   // 1. RANKING DOS 5 PROFISSIONAIS COM MAIOR VOLUME DE ATENDIMENTOS DO MÊS
   // =========================================================================
   const top5Professionals = useMemo(() => {
     if (hasRealMonthData) {
-      // Contabiliza volume e faturamento por profissional
+      // Contabiliza volume, faturamento e comissão real por profissional
       const map = new Map<
         string,
         {
@@ -97,6 +111,7 @@ export const TopPerformersRanking: React.FC<TopPerformersRankingProps> = ({
           volume: number;
           completedVolume: number;
           revenue: number;
+          commission: number;
         }
       >();
 
@@ -108,23 +123,23 @@ export const TopPerformersRanking: React.FC<TopPerformersRankingProps> = ({
             volume: 0,
             completedVolume: 0,
             revenue: 0,
+            commission: 0,
           });
         }
       });
 
-      monthAppointments.forEach((a) => {
-        if (!a.professionalId) return;
-        let item = map.get(a.professionalId);
-        if (!item) {
-          const pro = professionals.find((p) => p.id === a.professionalId) || {
-            id: a.professionalId,
-            name: a.professionalName || 'Profissional',
+      const ensureEntry = (proId: string, fallbackName?: string, businessId?: string) => {
+        let entry = map.get(proId);
+        if (!entry) {
+          const pro = professionals.find((p) => p.id === proId) || {
+            id: proId,
+            name: fallbackName || 'Profissional',
             role: 'profissional' as const,
             avatar:
               'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&h=100&fit=crop&crop=face',
             specialties: ['Especialista'],
             commissionPercentage: 40,
-            businessId: a.businessId,
+            businessId: businessId || '',
             email: '',
             phone: '',
             active: true,
@@ -132,15 +147,48 @@ export const TopPerformersRanking: React.FC<TopPerformersRankingProps> = ({
             totalEarningsMonth: 0,
             appointmentsCountMonth: 0,
           };
-          item = { professional: pro, volume: 0, completedVolume: 0, revenue: 0 };
-          map.set(a.professionalId, item);
+          entry = { professional: pro, volume: 0, completedVolume: 0, revenue: 0, commission: 0 };
+          map.set(proId, entry);
         }
+        return entry;
+      };
+
+      // 1) Fatias exatas das comandas fechadas (com rateio multi-profissional e descontos)
+      closedMonthComandas.forEach((cmd) => {
+        const candidatePros = new Set<string>();
+        if (cmd.professionalId) candidatePros.add(cmd.professionalId);
+        cmd.professionalIds?.forEach((id) => candidatePros.add(id));
+        cmd.items?.forEach((it) => {
+          if (it.professionalId) candidatePros.add(it.professionalId);
+        });
+
+        candidatePros.forEach((proId) => {
+          const share = getComandaRevenueForProfessional(cmd, proId, services, professionals);
+          if (share.hasParticipation) {
+            const entry = ensureEntry(proId, cmd.professionalName, cmd.businessId);
+            entry.revenue += share.revenue;
+            entry.commission += share.commission;
+          }
+        });
+      });
+
+      // 2) Volume da agenda + agendamentos ainda não cobertos por comanda fechada
+      monthAppointments.forEach((a) => {
+        if (!a.professionalId) return;
+        const item = ensureEntry(a.professionalId, a.professionalName, a.businessId);
 
         item.volume += 1;
         if (a.status === 'concluido' || a.paymentStatus === 'pago') {
           item.completedVolume += 1;
         }
-        item.revenue += a.price || 0;
+
+        if (!isAppointmentCoveredByClosedComanda(a, closedMonthComandas)) {
+          const srv = services.find((s) => s.id === a.serviceId);
+          const pct = srv?.commissionPercentage ?? item.professional.commissionPercentage ?? 40;
+          const price = a.price || 0;
+          item.revenue += price;
+          item.commission += (price * pct) / 100;
+        }
       });
 
       const list = Array.from(map.values())
@@ -156,7 +204,7 @@ export const TopPerformersRanking: React.FC<TopPerformersRankingProps> = ({
         volume: item.volume,
         completedVolume: item.completedVolume,
         revenue: item.revenue,
-        commission: (item.revenue * (item.professional.commissionPercentage || 40)) / 100,
+        commission: item.commission,
         percentageOfTotal: Math.round((item.volume / totalAppointmentsInMonth) * 100),
         relativeProgress: Math.min(100, Math.round((item.volume / maxVolume) * 100)),
         isSimulated: false,
@@ -179,7 +227,7 @@ export const TopPerformersRanking: React.FC<TopPerformersRankingProps> = ({
       relativeProgress: 0,
       isSimulated: false,
     }));
-  }, [hasRealMonthData, monthAppointments, professionals]);
+  }, [hasRealMonthData, monthAppointments, closedMonthComandas, professionals, services]);
 
   // =========================================================================
   // 2. RANKING DOS 5 SERVIÇOS MAIS PROCURADOS DO MÊS
@@ -206,6 +254,41 @@ export const TopPerformersRanking: React.FC<TopPerformersRankingProps> = ({
         }
       });
 
+      closedMonthComandas.forEach((cmd) => {
+        const factor = getComandaEffectiveFactor(cmd);
+        (cmd.items || []).forEach((it) => {
+          if (it.type !== 'servico') return;
+          const matchedSrv =
+            (it.serviceId ? services.find((s) => s.id === it.serviceId) : undefined) ||
+            services.find((s) => s.name.trim().toLowerCase() === it.name.trim().toLowerCase());
+          const srvId = it.serviceId || matchedSrv?.id;
+          if (!srvId) return;
+
+          let item = map.get(srvId);
+          if (!item) {
+            const srv = matchedSrv || {
+              id: srvId,
+              name: it.name || 'Serviço',
+              category: 'Geral',
+              price: it.price || 0,
+              durationMinutes: 45,
+              commissionPercentage: it.commissionPercentage ?? 40,
+              businessId: cmd.businessId,
+              description: '',
+              allowedProfessionalIds: [],
+              active: true,
+            };
+            item = { service: srv, volume: 0, revenue: 0 };
+            map.set(srvId, item);
+          }
+
+          if (!it.appointmentId) {
+            item.volume += it.quantity || 1;
+          }
+          item.revenue += (it.price || 0) * (it.quantity || 1) * factor;
+        });
+      });
+
       monthAppointments.forEach((a) => {
         if (!a.serviceId) return;
         let item = map.get(a.serviceId);
@@ -227,7 +310,9 @@ export const TopPerformersRanking: React.FC<TopPerformersRankingProps> = ({
         }
 
         item.volume += 1;
-        item.revenue += a.price || 0;
+        if (!isAppointmentCoveredByClosedComanda(a, closedMonthComandas)) {
+          item.revenue += a.price || 0;
+        }
       });
 
       const list = Array.from(map.values())
@@ -235,7 +320,7 @@ export const TopPerformersRanking: React.FC<TopPerformersRankingProps> = ({
         .slice(0, 5);
 
       const maxVolume = list[0]?.volume || 1;
-      const totalAppointmentsInMonth = monthAppointments.length || 1;
+      const totalAppointmentsInMonth = list.reduce((acc, s) => acc + s.volume, 0) || 1;
 
       return list.map((item, idx) => ({
         rank: idx + 1,
@@ -262,7 +347,7 @@ export const TopPerformersRanking: React.FC<TopPerformersRankingProps> = ({
       relativeProgress: 0,
       isSimulated: false,
     }));
-  }, [hasRealMonthData, monthAppointments, services]);
+  }, [hasRealMonthData, monthAppointments, closedMonthComandas, services]);
 
   // Renderizador do selo de pódio (1º, 2º, 3º lugar e demais)
   const renderRankBadge = (rank: number) => {

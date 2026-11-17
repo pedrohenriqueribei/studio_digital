@@ -19,10 +19,12 @@ import {
   Sparkles,
   GripVertical,
   ArrowRightLeft,
+  Layers,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Appointment, AppointmentStatus } from '../../types';
-import { getTodayDateString, addDaysToDate, formatDateHeader } from '../../utils/date';
+import { getTodayDateString, addDaysToDate, formatDateHeader, formatDateBR } from '../../utils/date';
+import { maskPhone, maskCurrency } from '../../utils/masks';
 import { timeToMinutes, minutesToTime } from '../../utils/availability';
 
 export const AgendaView: React.FC = () => {
@@ -748,12 +750,23 @@ export const AgendaView: React.FC = () => {
                                   </div>
 
                                   <p
-                                    className={`text-[11px] truncate mb-1.5 ${
+                                    className={`text-[11px] truncate ${
                                       isCancelled ? 'text-slate-400 line-through' : 'text-slate-600'
                                     }`}
                                   >
                                     {app.serviceName}
                                   </p>
+                                  {(app.bookingGroupId || (app.groupTotalServices ?? 1) > 1) && (
+                                    <p className="text-[10px] font-medium text-indigo-700 mt-0.5 mb-1 truncate flex items-center gap-1">
+                                      <Layers className="w-3 h-3 shrink-0" />
+                                      <span>
+                                        Etapa {app.groupServiceIndex || 1}/{app.groupTotalServices || 2} · Comanda unificada
+                                      </span>
+                                    </p>
+                                  )}
+                                  {!app.bookingGroupId && (app.groupTotalServices ?? 1) <= 1 && (
+                                    <div className="mb-1.5" />
+                                  )}
 
                                   <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1.5 border-t border-slate-100/80">
                                     <div className="flex items-center gap-1">
@@ -917,7 +930,7 @@ export const AgendaView: React.FC = () => {
                         </span>
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-x-3 text-xs text-slate-500">
+                      <div className="flex flex-wrap items-center gap-x-2 text-xs text-slate-500">
                         <span
                           className={`font-medium ${
                             isCancelled ? 'line-through text-slate-400' : 'text-slate-800'
@@ -925,6 +938,14 @@ export const AgendaView: React.FC = () => {
                         >
                           {app.serviceName}
                         </span>
+                        {(app.bookingGroupId || (app.groupTotalServices ?? 1) > 1) && (
+                          <>
+                            <span>·</span>
+                            <span className="text-indigo-700 font-semibold">
+                              Etapa {app.groupServiceIndex || 1}/{app.groupTotalServices || 2}
+                            </span>
+                          </>
+                        )}
                         <span>·</span>
                         <span>Com {pro?.name || 'Profissional'}</span>
                         <span>·</span>
@@ -969,8 +990,8 @@ export const AgendaView: React.FC = () => {
 
       {/* Appointment Detail Modal Drawer with Full Status Controller */}
       {selectedAppointment && (
-        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg p-6 animate-in fade-in zoom-in-95 duration-150">
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg max-h-[85vh] overflow-y-auto p-6 flex flex-col my-auto animate-in fade-in zoom-in-95 duration-150">
             {/* Modal Header with Current Status Badge */}
             <div className="flex items-start justify-between mb-4">
               <div>
@@ -1029,13 +1050,13 @@ export const AgendaView: React.FC = () => {
                 <div>
                   <span className="text-slate-400 block mb-0.5">Valor:</span>
                   <span className="font-bold text-slate-900 font-mono tabular-nums text-sm">
-                    R$ {selectedAppointment.price.toFixed(2)}
+                    {maskCurrency(selectedAppointment.price)}
                   </span>
                 </div>
                 <div>
                   <span className="text-slate-400 block mb-0.5">Horário:</span>
                   <span className="font-medium text-slate-800 font-mono tabular-nums">
-                    {selectedAppointment.startTime} às {selectedAppointment.endTime} ({selectedAppointment.date})
+                    {selectedAppointment.startTime} às {selectedAppointment.endTime} ({formatDateBR(selectedAppointment.date)})
                   </span>
                 </div>
                 <div>
@@ -1046,10 +1067,90 @@ export const AgendaView: React.FC = () => {
                 </div>
               </div>
 
+              {/* Sequência de Atendimento Unificado (Multi-serviço) */}
+              {(() => {
+                const groupSiblings = selectedAppointment.bookingGroupId
+                  ? activeAppointments
+                      .filter((a) => a.bookingGroupId === selectedAppointment.bookingGroupId)
+                      .sort(
+                        (a, b) =>
+                          (a.groupServiceIndex || 0) - (b.groupServiceIndex || 0) ||
+                          a.startTime.localeCompare(b.startTime)
+                      )
+                  : selectedAppointment.comandaId
+                  ? activeAppointments
+                      .filter((a) => a.comandaId === selectedAppointment.comandaId)
+                      .sort((a, b) => a.startTime.localeCompare(b.startTime))
+                  : [];
+
+                if (groupSiblings.length <= 1) return null;
+
+                const activeGroupTotal = groupSiblings
+                  .filter((a) => a.status !== 'cancelado')
+                  .reduce((sum, a) => sum + (a.price || 0), 0);
+
+                return (
+                  <div className="p-3 bg-indigo-50/50 border border-indigo-200/80 rounded-xl space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-800 flex items-center gap-1.5">
+                        <Layers className="w-3.5 h-3.5 text-indigo-600" />
+                        <span>Sequência do Atendimento Unificado ({groupSiblings.length} etapas)</span>
+                      </span>
+                      <span className="font-mono tabular-nums font-bold text-slate-900">
+                        {maskCurrency(activeGroupTotal)}
+                      </span>
+                    </div>
+                    <div className="divide-y divide-indigo-100 bg-white rounded-lg border border-indigo-100 overflow-hidden">
+                      {groupSiblings.map((sib, idx) => {
+                        const isCurrent = sib.id === selectedAppointment.id;
+                        const sibPro = activeProfessionals.find((p) => p.id === sib.professionalId);
+                        const sibCancelled = sib.status === 'cancelado';
+                        return (
+                          <button
+                            key={sib.id}
+                            type="button"
+                            onClick={() => setSelectedAppointment(sib)}
+                            className={`w-full text-left px-3 py-2 flex items-center justify-between gap-2 text-[11px] transition-colors cursor-pointer ${
+                              isCurrent ? 'bg-indigo-50/70 font-semibold' : 'hover:bg-slate-50'
+                            }`}
+                          >
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-mono tabular-nums text-slate-500">
+                                  {sib.groupServiceIndex || idx + 1}. {sib.startTime}–{sib.endTime}
+                                </span>
+                                <span
+                                  className={`truncate ${
+                                    sibCancelled ? 'line-through text-slate-400' : 'text-slate-900 font-semibold'
+                                  }`}
+                                >
+                                  {sib.serviceName}
+                                </span>
+                              </div>
+                              <span className="text-[10px] text-slate-500 block">
+                                Com {sibPro?.name || sib.professionalName || 'Profissional'}
+                                {sibCancelled ? ' · Cancelado' : ''}
+                              </span>
+                            </div>
+                            <span
+                              className={`font-mono tabular-nums font-bold shrink-0 ${
+                                sibCancelled ? 'line-through text-slate-400' : 'text-slate-900'
+                              }`}
+                            >
+                              {maskCurrency(sib.price)}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+
               {/* Client WhatsApp direct touch */}
               <div className="flex items-center justify-between p-3 border border-slate-200 rounded-xl">
                 <div>
-                  <p className="font-semibold text-slate-800">{selectedAppointment.clientPhone}</p>
+                  <p className="font-semibold text-slate-800">{maskPhone(selectedAppointment.clientPhone)}</p>
                   <p className="text-slate-400 text-[11px]">Contato direto do cliente</p>
                 </div>
                 <a
@@ -1081,47 +1182,47 @@ export const AgendaView: React.FC = () => {
                     <span className="text-[10px] text-slate-500">Ou arraste diretamente na grade</span>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
                     <div>
-                      <label className="text-[11px] text-slate-500 block mb-1">Especialista:</label>
-                      <select
-                        value={selectedAppointment.professionalId}
+                      <label className="text-[11px] text-slate-500 font-medium block mb-1 flex items-center gap-1">
+                        <CalendarDays className="w-3 h-3 text-slate-400" />
+                        <span>Data:</span>
+                      </label>
+                      <input
+                        type="date"
+                        value={selectedAppointment.date}
                         onChange={(e) => {
-                          const newProId = e.target.value;
-                          const targetPro = activeProfessionals.find((p) => p.id === newProId);
+                          const newDate = e.target.value;
+                          if (!newDate) return;
                           const updated: Appointment = {
                             ...selectedAppointment,
-                            professionalId: newProId,
-                            professionalName: targetPro?.name || selectedAppointment.professionalName,
+                            date: newDate,
                           };
                           const res = updateAppointment(updated);
                           if (res.success) {
                             setSelectedAppointment(updated);
                             setDragFeedback({
                               type: 'success',
-                              message: `Especialista alterado para ${targetPro?.name || 'novo especialista'}.`,
+                              message: `Agendamento reagendado para o dia ${formatDateBR(newDate)} às ${selectedAppointment.startTime}.`,
                             });
                             setTimeout(() => setDragFeedback(null), 4000);
                           } else {
                             setDragFeedback({
                               type: 'error',
-                              message: res.error || 'Conflito de horário com o especialista selecionado.',
+                              message: res.error || 'Conflito de horário na nova data selecionada.',
                             });
                             setTimeout(() => setDragFeedback(null), 5000);
                           }
                         }}
-                        className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs font-medium text-slate-800"
-                      >
-                        {activeProfessionals.map((pro) => (
-                          <option key={pro.id} value={pro.id}>
-                            {pro.name}
-                          </option>
-                        ))}
-                      </select>
+                        className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      />
                     </div>
 
                     <div>
-                      <label className="text-[11px] text-slate-500 block mb-1">Horário de Início:</label>
+                      <label className="text-[11px] text-slate-500 font-medium block mb-1 flex items-center gap-1">
+                        <Clock className="w-3 h-3 text-slate-400" />
+                        <span>Horário de Início:</span>
+                      </label>
                       <select
                         value={selectedAppointment.startTime}
                         onChange={(e) => {
@@ -1153,11 +1254,52 @@ export const AgendaView: React.FC = () => {
                             setTimeout(() => setDragFeedback(null), 5000);
                           }
                         }}
-                        className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs font-mono font-medium text-slate-800"
+                        className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs font-mono font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                       >
                         {defaultTimeSlots.map((slot) => (
                           <option key={slot} value={slot}>
                             {slot}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div>
+                      <label className="text-[11px] text-slate-500 font-medium block mb-1 flex items-center gap-1">
+                        <User className="w-3 h-3 text-slate-400" />
+                        <span>Especialista:</span>
+                      </label>
+                      <select
+                        value={selectedAppointment.professionalId}
+                        onChange={(e) => {
+                          const newProId = e.target.value;
+                          const targetPro = activeProfessionals.find((p) => p.id === newProId);
+                          const updated: Appointment = {
+                            ...selectedAppointment,
+                            professionalId: newProId,
+                            professionalName: targetPro?.name || selectedAppointment.professionalName,
+                          };
+                          const res = updateAppointment(updated);
+                          if (res.success) {
+                            setSelectedAppointment(updated);
+                            setDragFeedback({
+                              type: 'success',
+                              message: `Especialista alterado para ${targetPro?.name || 'novo especialista'}.`,
+                            });
+                            setTimeout(() => setDragFeedback(null), 4000);
+                          } else {
+                            setDragFeedback({
+                              type: 'error',
+                              message: res.error || 'Conflito de horário com o especialista selecionado.',
+                            });
+                            setTimeout(() => setDragFeedback(null), 5000);
+                          }
+                        }}
+                        className="w-full bg-white border border-slate-200 rounded-lg p-1.5 text-xs font-medium text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      >
+                        {activeProfessionals.map((pro) => (
+                          <option key={pro.id} value={pro.id}>
+                            {pro.name}
                           </option>
                         ))}
                       </select>
@@ -1187,7 +1329,11 @@ export const AgendaView: React.FC = () => {
                         key={item.id}
                         type="button"
                         onClick={() => {
-                          updateAppointmentStatus(selectedAppointment.id, item.id);
+                          updateAppointmentStatus(
+                            selectedAppointment.id,
+                            item.id,
+                            item.id === 'cancelado' ? 'Cancelado pelo gestor na agenda' : undefined
+                          );
                           setSelectedAppointment((prev) => (prev ? { ...prev, status: item.id } : null));
                         }}
                         className={`py-2 px-2.5 rounded-lg text-xs font-bold border transition-all cursor-pointer flex items-center justify-center gap-1.5 ${
@@ -1208,7 +1354,7 @@ export const AgendaView: React.FC = () => {
               <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
                 <button
                   onClick={() => {
-                    updateAppointmentStatus(selectedAppointment.id, 'cancelado');
+                    updateAppointmentStatus(selectedAppointment.id, 'cancelado', 'Cancelado na Agenda do Estabelecimento');
                     setSelectedAppointment((prev) => (prev ? { ...prev, status: 'cancelado' } : null));
                   }}
                   className="text-xs text-rose-600 hover:text-rose-800 font-semibold cursor-pointer flex items-center gap-1"
@@ -1225,7 +1371,11 @@ export const AgendaView: React.FC = () => {
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-800 rounded-lg font-semibold transition-colors cursor-pointer"
                 >
                   <DollarSign className="w-3.5 h-3.5" />
-                  <span>Ir para Caixa & Comanda</span>
+                  <span>
+                    {selectedAppointment.bookingGroupId
+                      ? 'Abrir Comanda Unificada no Caixa'
+                      : 'Ir para Caixa & Comanda'}
+                  </span>
                 </button>
               </div>
             </div>

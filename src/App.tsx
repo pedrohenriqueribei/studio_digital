@@ -28,6 +28,8 @@ import { Footer } from './components/layout/Footer';
 import { VirtualQueueManager } from './components/queue/VirtualQueueManager';
 import { NewQueueTicketModal } from './components/queue/NewQueueTicketModal';
 import { ReceptionTVDisplay } from './components/queue/ReceptionTVDisplay';
+import { MultiUnitsManager } from './components/units/MultiUnitsManager';
+import { NewUnitModal } from './components/units/NewUnitModal';
 import { Crown, Check, ExternalLink, Sparkles, Building2 } from 'lucide-react';
 
 const MainContent: React.FC = () => {
@@ -36,6 +38,8 @@ const MainContent: React.FC = () => {
     currentBusiness,
     setIsPlansModalOpen,
     setIsNewStudioModalOpen,
+    isNewUnitModalOpen,
+    setIsNewUnitModalOpen,
     isSuperAdminView,
     setIsSuperAdminView,
     saasPlans,
@@ -105,6 +109,7 @@ const MainContent: React.FC = () => {
             {activeTab === 'comandas' && <ComandasCheckout />}
             {activeTab === 'clientes' && <ClientsManager />}
             {activeTab === 'relatorios' && <ReportsManager />}
+            {activeTab === 'unidades' && <MultiUnitsManager />}
             {activeTab === 'configuracoes' && <StudioSettings />}
 
             {activeTab === 'planos' && (
@@ -202,6 +207,7 @@ const MainContent: React.FC = () => {
       <NewAppointmentModal />
       <NewQueueTicketModal />
       <NewStudioModal />
+      <NewUnitModal isOpen={isNewUnitModalOpen} onClose={() => setIsNewUnitModalOpen(false)} />
       <PlansModal />
       <LoginModal />
 

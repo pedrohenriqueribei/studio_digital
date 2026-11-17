@@ -102,7 +102,7 @@ export function getUserProfileLabel(profile: ResolvedUserProfile): string {
   }
 }
 
-export type BottomNavTabId = 'inicio' | 'agenda' | 'caixa' | 'comissoes' | 'clientes' | 'servicos' | 'profissionais' | 'relatorios' | 'configuracoes' | 'planos' | 'painelmaster';
+export type BottomNavTabId = 'inicio' | 'agenda' | 'caixa' | 'comissoes' | 'clientes' | 'servicos' | 'profissionais' | 'relatorios' | 'configuracoes' | 'planos' | 'painelmaster' | 'unidades';
 
 /**
  * Retorna a rota exata permitida para cada perfil e botão da navegação.
@@ -287,6 +287,21 @@ export function getRoleBasedDestination(
         return { path: '/app/gerente/planos', tabState: 'planos', allowed: true };
       }
       return { path: '/nossos-planos', allowed: true };
+    }
+
+    case 'unidades': {
+      if (profile === 'super_admin') {
+        return { path: '/admin/unidades', tabState: 'unidades', allowed: true };
+      }
+      if (profile === 'tenant_manager') {
+        return { path: '/app/gerente/unidades', tabState: 'unidades', allowed: true };
+      }
+      return {
+        path: '/app/gerente/dashboard',
+        tabState: 'dashboard',
+        allowed: false,
+        reason: 'A gestão multi-unidades é restrita a gestores e diretores.',
+      };
     }
 
     case 'painelmaster': {

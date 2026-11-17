@@ -34,12 +34,18 @@ import {
   Cell,
   Legend,
 } from 'recharts';
-import { Comanda, Appointment, UserRole, Professional } from '../../types';
+import { Comanda, Appointment, UserRole, Professional, Service } from '../../types';
 import { getTodayDateString } from '../../utils/date';
+import {
+  comandaInvolvesProfessional,
+  getComandaRevenueForProfessional,
+} from '../../utils/commissions';
 
 interface FinancialDashboardProps {
   comandas?: Comanda[];
   appointments?: Appointment[];
+  services?: Service[];
+  professionals?: Professional[];
   currentRole?: UserRole;
   currentProfessional?: Professional | null;
   tradeName?: string;
@@ -58,6 +64,8 @@ interface PaymentSlice {
 export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
   comandas = [],
   appointments = [],
+  services = [],
+  professionals = [],
   currentRole = 'gerente',
   currentProfessional = null,
   tradeName = 'Estabelecimento',
@@ -128,10 +136,10 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
     return days;
   }, [baseDate, todayStr]);
 
-  // Filtragem por profissional quando a role for 'profissional'
+  // Filtragem por profissional quando a role for 'profissional' (inclui comandas unificadas)
   const scopedComandas = useMemo(() => {
     if (currentRole === 'profissional' && currentProfessional) {
-      return comandas.filter((c) => c.professionalId === currentProfessional.id);
+      return comandas.filter((c) => comandaInvolvesProfessional(c, currentProfessional.id));
     }
     return comandas;
   }, [comandas, currentRole, currentProfessional]);
@@ -142,6 +150,21 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
     }
     return appointments;
   }, [appointments, currentRole, currentProfessional]);
+
+  const getScopedComandaValue = React.useCallback(
+    (cmd: Comanda) => {
+      if (currentRole === 'profissional' && currentProfessional) {
+        return getComandaRevenueForProfessional(
+          cmd,
+          currentProfessional.id,
+          services,
+          professionals
+        ).revenue;
+      }
+      return cmd.total || 0;
+    },
+    [currentRole, currentProfessional, services, professionals]
+  );
 
   // --------------------------------------------------------------------------
   // KPIs MENSAIS E CONSOLIDADOS (Faturamento Mensal, Ticket Médio, Atendimentos)
@@ -159,7 +182,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
       return a.date && a.date.startsWith(currentYearMonth) && a.status !== 'cancelado';
     });
 
-    const revenueFromComandas = monthComandas.reduce((acc, c) => acc + (c.total || 0), 0);
+    const revenueFromComandas = monthComandas.reduce((acc, c) => acc + getScopedComandaValue(c), 0);
     const revenueFromApps = monthApps.reduce((acc, a) => acc + (a.price || 0), 0);
 
     // Faturamento consolidado do mês
@@ -191,7 +214,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
       currentMonthName,
       currentYear,
     };
-  }, [scopedComandas, scopedAppointments, currentYearMonth, currentMonthName, currentYear, currentDayOfMonth, daysInCurrentMonth]);
+  }, [scopedComandas, scopedAppointments, currentYearMonth, currentMonthName, currentYear, currentDayOfMonth, daysInCurrentMonth, getScopedComandaValue]);
 
   // 1. Dados do Gráfico de Linha (Faturamento Semanal)
   const weeklyLineData = useMemo(() => {
@@ -204,7 +227,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
         return false;
       });
 
-      const revenueFromComandas = dayComandas.reduce((acc, c) => acc + (c.total || 0), 0);
+      const revenueFromComandas = dayComandas.reduce((acc, c) => acc + getScopedComandaValue(c), 0);
 
       // Agendamentos na data (faturamento previsto / realizado)
       const dayApps = scopedAppointments.filter((a) => a.date === day.dateStr && a.status !== 'cancelado');
@@ -225,7 +248,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
         ticketMedio: transacoes > 0 ? faturamento / transacoes : 0,
       };
     });
-  }, [weekDays, scopedComandas, scopedAppointments]);
+  }, [weekDays, scopedComandas, scopedAppointments, getScopedComandaValue]);
 
   // 2. Dados do Gráfico de Rosca (Distribuição de Pagamentos: PIX, Cartão, Dinheiro)
   const paymentDistributionData = useMemo<PaymentSlice[]>(() => {
@@ -252,7 +275,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
     let cashCount = 0;
 
     targetComandas.forEach((cmd) => {
-      const val = cmd.total || 0;
+      const val = getScopedComandaValue(cmd);
       const method = cmd.paymentMethod;
       if (method === 'pix') {
         pixSum += val;
@@ -336,7 +359,7 @@ export const FinancialDashboard: React.FC<FinancialDashboardProps> = ({
         icon: Banknote,
       },
     ];
-  }, [weekDays, scopedComandas, weeklyLineData]);
+  }, [weekDays, scopedComandas, getScopedComandaValue]);
 
   // Resumo de KPIs Semanais
   const totalWeeklyRevenue = useMemo(() => {

@@ -27,3 +27,12 @@ export const formatDateHeader = (dateStr: string): string => {
   const dayAndMonth = d.toLocaleDateString('pt-BR', { day: 'numeric', month: 'long', year: 'numeric' });
   return `${weekday.charAt(0).toUpperCase() + weekday.slice(1)}, ${dayAndMonth}`;
 };
+
+export const formatDateBR = (dateStr: string | undefined | null): string => {
+  if (!dateStr) return '';
+  const parts = dateStr.split('-');
+  if (parts.length === 3 && parts[0].length === 4) {
+    return `${parts[2]}/${parts[1]}/${parts[0]}`;
+  }
+  return dateStr;
+};

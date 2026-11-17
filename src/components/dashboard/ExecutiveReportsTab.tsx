@@ -50,6 +50,12 @@ import {
 import { Appointment, Comanda, Professional, Service, UserRole, Business } from '../../types';
 import { getTodayDateString } from '../../utils/date';
 import { formatCurrency } from '../../utils/availability';
+import {
+  comandaInvolvesProfessional,
+  getComandaProfessionalSplit,
+  getComandaRevenueForProfessional,
+  isAppointmentCoveredByClosedComanda,
+} from '../../utils/commissions';
 
 interface ExecutiveReportsTabProps {
   appointments: Appointment[];
@@ -167,15 +173,35 @@ export const ExecutiveReportsTab: React.FC<ExecutiveReportsTabProps> = ({
     });
   }, [appointments, startDate, endDate, selectedProId, selectedCategory, services]);
 
-  // Comandas filtradas por período e profissional
+  // Comandas filtradas por período e profissional (incluindo comandas unificadas multi-profissional)
   const periodComandas = useMemo(() => {
     return comandas.filter((c) => {
       const dateStr = (c.closedAt || c.createdAt || '').slice(0, 10);
       if (dateStr && (dateStr < startDate || dateStr > endDate)) return false;
-      if (selectedProId !== 'all' && c.professionalId !== selectedProId) return false;
+      if (selectedProId !== 'all' && !comandaInvolvesProfessional(c, selectedProId)) return false;
       return true;
     });
   }, [comandas, startDate, endDate, selectedProId]);
+
+  const getScopedComandaAmount = React.useCallback(
+    (cmd: Comanda) => {
+      if (selectedProId !== 'all') {
+        return getComandaRevenueForProfessional(cmd, selectedProId, services, professionals).revenue;
+      }
+      return cmd.total || 0;
+    },
+    [selectedProId, services, professionals]
+  );
+
+  const getScopedComandaCommission = React.useCallback(
+    (cmd: Comanda) => {
+      if (selectedProId !== 'all') {
+        return getComandaRevenueForProfessional(cmd, selectedProId, services, professionals).commission;
+      }
+      return getComandaProfessionalSplit(cmd, services, professionals).totalCommissions;
+    },
+    [selectedProId, services, professionals]
+  );
 
   // Se não houver dados reais no período e useSimulatedDataIfEmpty for true, gera dados analíticos consistentes
   const hasRealData = periodAppointments.length > 0 || periodComandas.length > 0;
@@ -268,28 +294,43 @@ export const ExecutiveReportsTab: React.FC<ExecutiveReportsTabProps> = ({
       };
     }
 
-    // Reais
+    // Reais: comandas fechadas com rateio exato + agendamentos não cobertos por comanda fechada
     const closedComandas = periodComandas.filter((c) => c.status === 'fechada');
-    const comandaRevenue = closedComandas.reduce((acc, c) => acc + (c.total || 0), 0);
+    const useComandaLedger = selectedCategory === 'all' && closedComandas.length > 0;
+    const comandaRevenue = useComandaLedger
+      ? closedComandas.reduce((acc, c) => acc + getScopedComandaAmount(c), 0)
+      : 0;
+    const comandaCommissions = useComandaLedger
+      ? closedComandas.reduce((acc, c) => acc + getScopedComandaCommission(c), 0)
+      : 0;
 
     const nonCancelledAppointments = periodAppointments.filter((a) => a.status !== 'cancelado');
-    const scheduledRevenue = nonCancelledAppointments.reduce((acc, a) => acc + (a.price || 0), 0);
-    const realizedAppointmentsRevenue = periodAppointments
-      .filter((a) => a.status === 'concluido' || a.paymentStatus === 'pago')
-      .reduce((acc, a) => acc + (a.price || 0), 0);
 
-    const totalRevenue = comandaRevenue > 0 ? comandaRevenue : scheduledRevenue;
-    const totalRealized = comandaRevenue > 0 ? comandaRevenue : realizedAppointmentsRevenue;
-    const totalVolume = nonCancelledAppointments.length || periodComandas.length;
-    const ticketMedio = totalVolume > 0 ? totalRevenue / totalVolume : 0;
+    let uncoveredScheduledRevenue = 0;
+    let uncoveredRealizedRevenue = 0;
+    let uncoveredCommission = 0;
 
-    // Comissões reais estimadas
-    const totalCommission = nonCancelledAppointments.reduce((acc, a) => {
+    nonCancelledAppointments.forEach((a) => {
       const srv = services.find((s) => s.id === a.serviceId);
       const pro = professionals.find((p) => p.id === a.professionalId);
-      const commPct = srv?.commissionPercentage || pro?.commissionPercentage || 35;
-      return acc + (a.price * commPct) / 100;
-    }, 0);
+      const commPct = srv?.commissionPercentage ?? pro?.commissionPercentage ?? 40;
+      const price = a.price || 0;
+      const isCovered = useComandaLedger && isAppointmentCoveredByClosedComanda(a, closedComandas);
+
+      if (!isCovered) {
+        uncoveredScheduledRevenue += price;
+        uncoveredCommission += (price * commPct) / 100;
+        if (a.status === 'concluido' || a.paymentStatus === 'pago') {
+          uncoveredRealizedRevenue += price;
+        }
+      }
+    });
+
+    const totalRevenue = comandaRevenue + uncoveredScheduledRevenue;
+    const totalRealized = comandaRevenue + uncoveredRealizedRevenue;
+    const totalVolume = nonCancelledAppointments.length || periodComandas.length;
+    const ticketMedio = totalVolume > 0 ? totalRevenue / totalVolume : 0;
+    const totalCommission = comandaCommissions + uncoveredCommission;
 
     return {
       totalRevenue,
@@ -299,7 +340,16 @@ export const ExecutiveReportsTab: React.FC<ExecutiveReportsTabProps> = ({
       totalCommission,
       closedComandasCount: closedComandas.length,
     };
-  }, [simulatedData, periodAppointments, periodComandas, services, professionals]);
+  }, [
+    simulatedData,
+    periodAppointments,
+    periodComandas,
+    selectedCategory,
+    services,
+    professionals,
+    getScopedComandaAmount,
+    getScopedComandaCommission,
+  ]);
 
   // Gráfico de linha do tempo de faturamento e volume
   const salesTimelineData = useMemo(() => {
@@ -318,32 +368,42 @@ export const ExecutiveReportsTab: React.FC<ExecutiveReportsTabProps> = ({
       curr.setDate(curr.getDate() + 1);
     }
 
-    // Preenche com comandas fechadas
+    const closedPeriodComandas = periodComandas.filter((c) => c.status === 'fechada');
+
+    // Preenche com comandas (respeitando rateio se houver filtro de profissional)
     periodComandas.forEach((c) => {
+      if (c.status === 'cancelada') return;
       const d = (c.closedAt || c.createdAt || '').slice(0, 10);
       if (d && map.has(d)) {
         const item = map.get(d)!;
-        item.faturamento += c.total || 0;
+        const val = getScopedComandaAmount(c);
+        item.faturamento += val;
         if (c.status === 'fechada') {
-          item.faturamentoRealizado += c.total || 0;
+          item.faturamentoRealizado += val;
         }
         item.volume += 1;
       }
     });
 
-    // Se não houver comandas, usa agendamentos
-    if (periodComandas.length === 0) {
-      periodAppointments.forEach((a) => {
-        if (a.date && map.has(a.date) && a.status !== 'cancelado') {
-          const item = map.get(a.date)!;
-          item.faturamento += a.price || 0;
-          if (a.status === 'concluido' || a.paymentStatus === 'pago') {
-            item.faturamentoRealizado += a.price || 0;
-          }
-          item.volume += 1;
+    // Complementa com agendamentos ainda sem comanda associada
+    periodAppointments.forEach((a) => {
+      if (
+        a.date &&
+        map.has(a.date) &&
+        a.status !== 'cancelado' &&
+        (periodComandas.length === 0 || !isAppointmentCoveredByClosedComanda(a, closedPeriodComandas))
+      ) {
+        if (periodComandas.length > 0 && a.comandaId && periodComandas.some((c) => c.id === a.comandaId)) {
+          return;
         }
-      });
-    }
+        const item = map.get(a.date)!;
+        item.faturamento += a.price || 0;
+        if (a.status === 'concluido' || a.paymentStatus === 'pago') {
+          item.faturamentoRealizado += a.price || 0;
+        }
+        item.volume += 1;
+      }
+    });
 
     const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
     return Array.from(map.entries()).map(([date, val]) => {
@@ -358,7 +418,7 @@ export const ExecutiveReportsTab: React.FC<ExecutiveReportsTabProps> = ({
         ticketMedio: val.volume > 0 ? Math.round(val.faturamento / val.volume) : 0,
       };
     });
-  }, [simulatedData, startDate, endDate, periodComandas, periodAppointments]);
+  }, [simulatedData, startDate, endDate, periodComandas, periodAppointments, getScopedComandaAmount]);
 
   // Vendas por Método de Pagamento
   const paymentMethodsData = useMemo(() => {
@@ -371,7 +431,7 @@ export const ExecutiveReportsTab: React.FC<ExecutiveReportsTabProps> = ({
 
     periodComandas.forEach((c) => {
       if (c.status === 'fechada' && c.paymentMethod) {
-        counts[c.paymentMethod] = (counts[c.paymentMethod] || 0) + (c.total || 0);
+        counts[c.paymentMethod] = (counts[c.paymentMethod] || 0) + getScopedComandaAmount(c);
       }
     });
 
@@ -393,7 +453,7 @@ export const ExecutiveReportsTab: React.FC<ExecutiveReportsTabProps> = ({
       { name: 'Cartão de Débito', value: Math.round((counts.cartao_debito / total) * 100), amount: counts.cartao_debito, color: '#8b5cf6' },
       { name: 'Dinheiro', value: Math.round((counts.dinheiro / total) * 100), amount: counts.dinheiro, color: '#f59e0b' },
     ].filter((item) => item.amount > 0 || item.value > 0);
-  }, [periodComandas, salesMetrics.totalRevenue]);
+  }, [periodComandas, salesMetrics.totalRevenue, getScopedComandaAmount]);
 
   // Vendas por Categoria de Serviço
   const categorySalesData = useMemo(() => {
@@ -443,7 +503,10 @@ export const ExecutiveReportsTab: React.FC<ExecutiveReportsTabProps> = ({
       };
     }
 
-    // Cálculo Real de Ocupação por Profissional
+    // Cálculo Real de Ocupação e Rateio por Profissional
+    const closedPeriodComandas = periodComandas.filter((c) => c.status === 'fechada');
+    const useComandaLedger = selectedCategory === 'all' && closedPeriodComandas.length > 0;
+
     const ranking = professionals.map((pro) => {
       // Horas disponíveis no período
       const dailyHours = pro.workHours
@@ -466,8 +529,29 @@ export const ExecutiveReportsTab: React.FC<ExecutiveReportsTabProps> = ({
         ? Math.min(100, Math.round((hoursBooked / totalHoursAvailable) * 100))
         : 0;
 
-      const revenue = proApps.reduce((acc, a) => acc + (a.price || 0), 0);
-      const commission = Math.round((revenue * (pro.commissionPercentage || 40)) / 100);
+      let revenue = 0;
+      let commission = 0;
+
+      if (useComandaLedger) {
+        closedPeriodComandas.forEach((cmd) => {
+          const share = getComandaRevenueForProfessional(cmd, pro.id, services, professionals);
+          if (share.hasParticipation) {
+            revenue += share.revenue;
+            commission += share.commission;
+          }
+        });
+      }
+
+      proApps.forEach((a) => {
+        if (useComandaLedger && isAppointmentCoveredByClosedComanda(a, closedPeriodComandas)) {
+          return;
+        }
+        const srv = services.find((s) => s.id === a.serviceId);
+        const pct = srv?.commissionPercentage ?? pro.commissionPercentage ?? 40;
+        const price = a.price || 0;
+        revenue += price;
+        commission += (price * pct) / 100;
+      });
 
       return {
         id: pro.id,
@@ -479,7 +563,7 @@ export const ExecutiveReportsTab: React.FC<ExecutiveReportsTabProps> = ({
         hoursBooked,
         clientsServed: proApps.length,
         revenue,
-        commission,
+        commission: Math.round(commission),
         ticketMedio: proApps.length > 0 ? Math.round(revenue / proApps.length) : 0,
       };
     });
@@ -497,7 +581,7 @@ export const ExecutiveReportsTab: React.FC<ExecutiveReportsTabProps> = ({
       totalHoursAvailable,
       professionalsRanking: ranking.sort((a, b) => b.occupancyRate - a.occupancyRate),
     };
-  }, [simulatedData, professionals, periodAppointments, dayCount]);
+  }, [simulatedData, professionals, periodAppointments, periodComandas, services, selectedCategory, dayCount]);
 
   // Picos de Agendamento por Faixa Horária (Distribuição de Horários)
   const hourlyOccupancyData = useMemo(() => {

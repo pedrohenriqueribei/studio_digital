@@ -101,6 +101,8 @@ export const ClientSignupPage: React.FC = () => {
   const { registerClient, loginWithGoogle, navigateTo, clients } = useApp();
 
   const formRef = useRef<HTMLFormElement>(null);
+  const completeSectionRef = useRef<HTMLDivElement>(null);
+  const [highlightCompleteSection, setHighlightCompleteSection] = useState(false);
 
   // States for "Complete seu cadastro" phone verification section
   const [verifyPhone, setVerifyPhone] = useState('');
@@ -108,6 +110,13 @@ export const ClientSignupPage: React.FC = () => {
   const [verificationResult, setVerificationResult] = useState<VerificationResult>(null);
   const [verifyError, setVerifyError] = useState('');
   const [completingClient, setCompletingClient] = useState<Client | null>(null);
+
+  // Verificação em tempo real do telefone inserido no formulário de cadastro
+  const [isCheckingPhone, setIsCheckingPhone] = useState(false);
+  const [phoneCheckState, setPhoneCheckState] = useState<{
+    status: 'idle' | 'checking' | 'found_incomplete' | 'found_complete' | 'available';
+    matchedClient: Client | null;
+  }>({ status: 'idle', matchedClient: null });
 
   // Registration Form State
   const [formData, setFormData] = useState<ClientRegistrationData>({
@@ -304,7 +313,99 @@ export const ClientSignupPage: React.FC = () => {
     }
     setFormData((prev) => ({ ...prev, phone: formatted }));
     setErrorMessage('');
+
+    if (raw.length < 10) {
+      setPhoneCheckState({ status: 'idle', matchedClient: null });
+    }
   };
+
+  // Helper para sugerir ao cliente completar o cadastro na seção "Complete seu cadastro"
+  const handleSuggestToCompleteSection = (client: Client, phoneToUse?: string) => {
+    const targetPhone = phoneToUse || client.phone || formData.phone;
+    setVerifyPhone(targetPhone);
+    setVerifyError('');
+
+    const isComplete = isClientProfileComplete(client);
+    setVerificationResult({
+      type: isComplete ? 'complete' : 'incomplete',
+      client,
+    });
+
+    // Ativa destaque visual e animação na seção "Complete seu cadastro"
+    setHighlightCompleteSection(true);
+    setTimeout(() => {
+      setHighlightCompleteSection(false);
+    }, 5000);
+
+    // Rolagem suave até a seção "Complete seu cadastro"
+    setTimeout(() => {
+      completeSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 80);
+  };
+
+  // Verificação automática e debounced do telefone inserido no formulário de cadastro
+  useEffect(() => {
+    const raw = formData.phone.replace(/\D/g, '');
+    if (raw.length < 10) {
+      setPhoneCheckState({ status: 'idle', matchedClient: null });
+      return;
+    }
+
+    // Se o usuário já está no modo de completar este cliente, não alerta duplicidade consigo mesmo
+    if (completingClient) {
+      const isCurrent = findDuplicateClientByPhone([completingClient], formData.phone);
+      if (isCurrent) {
+        setPhoneCheckState({ status: 'idle', matchedClient: null });
+        return;
+      }
+    }
+
+    let isCancelled = false;
+    const timer = setTimeout(async () => {
+      setIsCheckingPhone(true);
+      try {
+        // 1. Consulta em memória
+        let found = findDuplicateClientByPhone(clients, formData.phone);
+
+        // 2. Consulta de contingência no Firestore
+        if (!found) {
+          try {
+            const snap = await getDocs(collection(db, 'clients'));
+            const list: Client[] = [];
+            snap.forEach((d) => list.push(d.data() as Client));
+            found = findDuplicateClientByPhone(list, formData.phone);
+          } catch (e) {
+            console.warn('Erro ao consultar Firestore para duplicidade de telefone:', e);
+          }
+        }
+
+        if (isCancelled) return;
+
+        if (found) {
+          const isComplete = isClientProfileComplete(found);
+          if (isComplete) {
+            setPhoneCheckState({ status: 'found_complete', matchedClient: found });
+          } else {
+            // Cliente incompleto (ex: cadastro rápido por um profissional)
+            setPhoneCheckState({ status: 'found_incomplete', matchedClient: found });
+          }
+        } else {
+          setPhoneCheckState({ status: 'available', matchedClient: null });
+        }
+      } catch (err) {
+        console.warn('Erro na verificação de telefone:', err);
+      } finally {
+        if (!isCancelled) {
+          setIsCheckingPhone(false);
+        }
+      }
+    }, 350);
+
+    return () => {
+      isCancelled = true;
+      clearTimeout(timer);
+    };
+  }, [formData.phone, clients, completingClient]);
 
   // Logic for "Verificar" button in "Complete seu cadastro" section
   const handleVerify = async () => {
@@ -416,6 +517,37 @@ export const ClientSignupPage: React.FC = () => {
     if (rawPhone.length < 10) {
       setErrorMessage('Por favor, informe um telefone/WhatsApp válido com DDD.');
       return;
+    }
+
+    // Verificar se o telefone inserido já foi cadastrado antes de fazer o cadastro (ex: cadastro rápido)
+    if (!completingClient) {
+      let existingClient = findDuplicateClientByPhone(clients, formData.phone);
+      if (!existingClient) {
+        try {
+          const snap = await getDocs(collection(db, 'clients'));
+          const firestoreClients: Client[] = [];
+          snap.forEach((doc) => firestoreClients.push(doc.data() as Client));
+          existingClient = findDuplicateClientByPhone(firestoreClients, formData.phone);
+        } catch (dbErr) {
+          console.warn('Erro ao consultar Firestore no submit:', dbErr);
+        }
+      }
+
+      if (existingClient) {
+        const isComplete = isClientProfileComplete(existingClient);
+        if (!isComplete) {
+          setErrorMessage(
+            `Este telefone já possui cadastro prévio no Studio Digital (ex: cadastro rápido feito por um profissional). Sugerimos completar seu cadastro na seção 'Complete seu cadastro' acima.`
+          );
+          handleSuggestToCompleteSection(existingClient, formData.phone);
+          return;
+        } else {
+          setErrorMessage(
+            'Este telefone já possui um cadastro completo em nosso sistema. Faça login para acessar seus agendamentos.'
+          );
+          return;
+        }
+      }
     }
 
     if (formData.password.length < 6) {
@@ -541,8 +673,30 @@ export const ClientSignupPage: React.FC = () => {
             <span>Cadastrar rapidamente com a conta Google</span>
           </button>
 
-          {/* NOVA SEÇÃO: "Complete seu cadastro" */}
-          <div className="p-4 sm:p-5 rounded-2xl bg-slate-950/80 border border-slate-800/90 space-y-3.5 shadow-inner">
+          {/* SEÇÃO: "Complete seu cadastro" */}
+          <div
+            ref={completeSectionRef}
+            id="complete-seu-cadastro-section"
+            className={`p-4 sm:p-5 rounded-2xl transition-all duration-500 space-y-3.5 shadow-inner ${
+              highlightCompleteSection
+                ? 'bg-amber-950/40 border-2 border-amber-400 ring-4 ring-amber-400/30 shadow-2xl shadow-amber-500/20 scale-[1.01]'
+                : 'bg-slate-950/80 border border-slate-800/90'
+            }`}
+          >
+            {highlightCompleteSection && (
+              <div className="p-3 rounded-xl bg-amber-500/20 border border-amber-500/50 text-amber-200 text-xs flex items-start gap-2.5 animate-pulse">
+                <Sparkles className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold text-white text-xs">
+                    Completar cadastro existente
+                  </p>
+                  <p className="text-[11px] text-amber-200/90 mt-0.5 leading-relaxed">
+                    Identificamos um cadastro prévio vinculado ao telefone informado (ex: cadastro rápido por um profissional). Finalize seus dados abaixo para ativar sua conta e manter seus agendamentos!
+                  </p>
+                </div>
+              </div>
+            )}
+
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
               <h2 className="text-sm font-bold text-white flex items-center gap-2">
                 <Search className="w-4 h-4 text-emerald-400" />
@@ -841,9 +995,104 @@ export const ClientSignupPage: React.FC = () => {
                     value={formData.phone}
                     onChange={handlePhoneChange}
                     placeholder="(11) 98765-4321"
-                    className="w-full pl-9 pr-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-none focus:border-emerald-500"
+                    className={`w-full pl-9 pr-9 py-2 text-xs bg-slate-950 border rounded-xl text-white transition-all focus:outline-none ${
+                      phoneCheckState.status === 'found_incomplete'
+                        ? 'border-amber-500 bg-amber-950/20 text-amber-100 focus:border-amber-400 focus:ring-1 focus:ring-amber-400/50'
+                        : phoneCheckState.status === 'found_complete'
+                        ? 'border-rose-500 bg-rose-950/20 text-rose-100 focus:border-rose-400 focus:ring-1 focus:ring-rose-400/50'
+                        : phoneCheckState.status === 'available'
+                        ? 'border-emerald-500/80 focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/40'
+                        : 'border-slate-800 focus:border-emerald-500'
+                    }`}
                   />
+                  <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center pointer-events-none">
+                    {isCheckingPhone ? (
+                      <div className="w-3.5 h-3.5 border-2 border-emerald-400 border-t-transparent rounded-full animate-spin" />
+                    ) : phoneCheckState.status === 'found_incomplete' ? (
+                      <AlertTriangle className="w-4 h-4 text-amber-400" />
+                    ) : phoneCheckState.status === 'found_complete' ? (
+                      <AlertCircle className="w-4 h-4 text-rose-400" />
+                    ) : phoneCheckState.status === 'available' ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                    ) : null}
+                  </div>
                 </div>
+
+                {/* Sugestão quando o telefone já foi cadastrado (ex: cadastro rápido por um profissional) */}
+                {phoneCheckState.status === 'found_incomplete' && phoneCheckState.matchedClient && (
+                  <div className="mt-2 p-3 bg-amber-500/10 border border-amber-500/40 rounded-xl text-amber-200 text-xs space-y-2.5 animate-in fade-in slide-in-from-top-1">
+                    <div className="flex items-start gap-2.5">
+                      <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <div className="space-y-0.5">
+                        <p className="font-bold text-amber-300">
+                          Telefone já possui pré-cadastro no Studio Digital!
+                        </p>
+                        <p className="text-[11px] text-amber-200/90 leading-relaxed">
+                          {phoneCheckState.matchedClient.name
+                            ? `Identificamos que este número já está registrado para "${phoneCheckState.matchedClient.name}"`
+                            : 'Identificamos que este número já está cadastrado'}{' '}
+                          (ex: cadastro rápido feito por um profissional). Complete suas informações para criar sua senha e manter seus agendamentos.
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="pt-0.5 flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => handleSuggestToCompleteSection(phoneCheckState.matchedClient!, formData.phone)}
+                        className="px-3 py-2 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs rounded-xl transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-md shadow-amber-500/20 active:scale-98"
+                      >
+                        <Search className="w-3.5 h-3.5" />
+                        <span>Completar na seção "Complete seu cadastro"</span>
+                        <ArrowRight className="w-3.5 h-3.5" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleStartCompleteRegistration(phoneCheckState.matchedClient!)}
+                        className="px-3 py-2 bg-slate-900 hover:bg-slate-800 border border-amber-500/30 text-amber-300 text-xs font-semibold rounded-xl transition-colors cursor-pointer text-center"
+                      >
+                        Preencher formulário diretamente
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Feedback quando o telefone já possui cadastro completo */}
+                {phoneCheckState.status === 'found_complete' && (
+                  <div className="mt-2 p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-200 text-xs space-y-2 animate-in fade-in slide-in-from-top-1">
+                    <div className="flex items-start gap-2">
+                      <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
+                      <div className="space-y-0.5">
+                        <p className="font-bold text-rose-300">
+                          Este telefone já possui conta completa cadastrada
+                        </p>
+                        <p className="text-[11px] text-rose-200/90 leading-relaxed">
+                          {phoneCheckState.matchedClient?.name
+                            ? `Conta vinculada a ${phoneCheckState.matchedClient.name}. `
+                            : ''}
+                          Você já pode entrar diretamente com seu e-mail e senha.
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => navigateTo('/login?role=client')}
+                      className="px-3.5 py-1.5 bg-rose-500 hover:bg-rose-400 text-slate-950 font-bold text-xs rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer shadow-sm w-full sm:w-auto justify-center"
+                    >
+                      <LogIn className="w-3.5 h-3.5" />
+                      <span>Fazer login</span>
+                    </button>
+                  </div>
+                )}
+
+                {/* Feedback discreto quando o telefone está livre */}
+                {phoneCheckState.status === 'available' && !completingClient && (
+                  <div className="mt-1 flex items-center gap-1 text-[11px] text-emerald-400">
+                    <CheckCircle2 className="w-3 h-3" />
+                    <span>Telefone disponível para novo cadastro</span>
+                  </div>
+                )}
               </div>
             </div>
 

@@ -22,7 +22,8 @@
         "monthlyRevenue": { "type": "number" },
         "managerName": { "type": "string" },
         "managerEmail": { "type": "string" },
-        "managerPassword": { "type": "string" }
+        "managerPassword": { "type": "string" },
+        "loyaltyConfig": { "type": "object" }
       },
       "required": ["id", "name", "type", "tradeName", "city", "state", "phone", "planId", "status"]
     },
@@ -106,7 +107,11 @@
         "status": { "type": "string", "enum": ["agendado", "confirmado", "em_atendimento", "concluido", "cancelado"] },
         "price": { "type": "number" },
         "paymentStatus": { "type": "string", "enum": ["pendente", "pago"] },
-        "notes": { "type": "string" }
+        "notes": { "type": "string" },
+        "bookingGroupId": { "type": "string" },
+        "groupServiceIndex": { "type": "number" },
+        "groupTotalServices": { "type": "number" },
+        "comandaId": { "type": "string" }
       },
       "required": ["id", "clientId", "clientName", "professionalId", "serviceId", "date", "startTime", "endTime", "status", "price"]
     },
@@ -138,7 +143,12 @@
         "status": { "type": "string" },
         "profileStatus": { "type": "string" },
         "createdAt": { "type": "string" },
-        "updatedAt": { "type": "string" }
+        "updatedAt": { "type": "string" },
+        "loyaltyPoints": { "type": "number" },
+        "loyaltyTotalEarned": { "type": "number" },
+        "loyaltyRewardsRedeemed": { "type": "number" },
+        "loyaltyHistory": { "type": "array" },
+        "loyaltyNotifiedMilestones": { "type": "object" }
       },
       "required": ["id", "name", "phone", "email"]
     },
@@ -151,17 +161,21 @@
         "businessId": { "type": "string" },
         "tenant_id": { "type": "string" },
         "appointmentId": { "type": "string" },
+        "appointmentIds": { "type": "array" },
+        "bookingGroupId": { "type": "string" },
         "clientName": { "type": "string" },
         "clientPhone": { "type": "string" },
         "professionalId": { "type": "string" },
         "professionalName": { "type": "string" },
+        "professionalIds": { "type": "array" },
         "items": { "type": "array" },
         "subtotal": { "type": "number" },
         "discount": { "type": "number" },
         "total": { "type": "number" },
         "paymentMethod": { "type": "string" },
-        "status": { "type": "string", "enum": ["aberta", "fechada"] },
-        "createdAt": { "type": "string" }
+        "status": { "type": "string", "enum": ["aberta", "fechada", "cancelada"] },
+        "createdAt": { "type": "string" },
+        "closedAt": { "type": "string" }
       },
       "required": ["id", "clientName", "professionalId", "subtotal", "total", "status"]
     },
@@ -219,6 +233,39 @@
         "notes": { "type": "string" }
       },
       "required": ["id", "businessId", "ticketNumber", "clientName", "serviceId", "serviceName", "status", "joinedAt"]
+    },
+    "LoyaltyNotification": {
+      "title": "LoyaltyNotification",
+      "description": "Push and email loyalty milestone notifications sent when clients reach 50% or 90% progress",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "businessId": { "type": "string" },
+        "tenant_id": { "type": "string" },
+        "clientId": { "type": "string" },
+        "clientName": { "type": "string" },
+        "clientEmail": { "type": "string" },
+        "clientPhone": { "type": "string" },
+        "milestonePercent": { "type": "number" },
+        "cycle": { "type": "number" },
+        "pointsAtDispatch": { "type": "number" },
+        "rewardThreshold": { "type": "number" },
+        "rewardTitle": { "type": "string" },
+        "channel": { "type": "string", "enum": ["both", "push", "email"] },
+        "title": { "type": "string" },
+        "message": { "type": "string" },
+        "emailSubject": { "type": "string" },
+        "emailBody": { "type": "string" },
+        "pushStatus": { "type": "string" },
+        "emailStatus": { "type": "string" },
+        "emailStatusDetail": { "type": "string" },
+        "status": { "type": "string", "enum": ["enviado", "lida"] },
+        "ctaAction": { "type": "string" },
+        "isManualOrTest": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "readAt": { "type": "string" }
+      },
+      "required": ["id", "businessId", "clientId", "milestonePercent", "channel", "title", "message", "status", "createdAt"]
     }
   },
   "firestore": {
@@ -261,6 +308,10 @@
     "/virtualQueue/{queueId}": {
       "schema": "#/entities/VirtualQueueItem",
       "description": "Virtual queue and reception TV tickets"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "#/entities/LoyaltyNotification",
+      "description": "Push and email loyalty milestone notifications"
     }
   }
 }

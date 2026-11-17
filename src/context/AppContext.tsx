@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
 import {
   Business,
   Professional,
@@ -6,6 +6,7 @@ import {
   Appointment,
   Client,
   Comanda,
+  ComandaItem,
   UserRole,
   AppointmentStatus,
   NotificationItem,
@@ -21,6 +22,9 @@ import {
   ClientPreferences,
   VirtualQueueItem,
   VirtualQueueStatus,
+  LoyaltyConfig,
+  LoyaltyMilestoneNotification,
+  LoyaltyNotificationChannel,
 } from '../types';
 import {
   INITIAL_BUSINESSES,
@@ -47,7 +51,18 @@ import { onAuthStateChanged, User as FirebaseUser } from 'firebase/auth';
 import { collection, onSnapshot, query, where, getDocs } from 'firebase/firestore';
 import { slugify } from '../utils/slugify';
 import { getTodayDateString } from '../utils/date';
-import { checkAppointmentConflict, AppointmentConflictResult } from '../utils/availability';
+import {
+  checkAppointmentConflict,
+  AppointmentConflictResult,
+  timeToMinutes,
+  minutesToTime,
+} from '../utils/availability';
+import {
+  resolveItemCommissionPercentage,
+  getComandaProfessionalIds,
+  getComandaProfessionalsLabel,
+  computeProfessionalMonthMetrics,
+} from '../utils/commissions';
 import {
   syncBusinessToFirestore,
   deleteBusinessFromFirestore,
@@ -64,12 +79,27 @@ import {
   syncReviewToFirestore,
   syncQueueItemToFirestore,
   deleteQueueItemFromFirestore,
+  syncLoyaltyNotificationToFirestore,
   seedPlansToFirestore,
   createTenantUserInFirebaseAuth,
   createClientUserInFirebaseAuth,
   purgeAllMockDataFromFirestore,
   resetTenantDataToZero,
 } from '../services/firestoreSync';
+import { findDuplicateClientByPhone } from '../utils/clientValidation';
+import {
+  getBusinessLoyaltyConfig,
+  hasLoyaltyCreditForReference,
+  applyLoyaltyMutation,
+  findMatchingClientForRecord,
+} from '../utils/loyalty';
+import {
+  detectLoyaltyMilestonesCrossed,
+  buildLoyaltyMilestoneCopy,
+  dispatchLoyaltyMilestoneEmail,
+  triggerBrowserPushNotification,
+  markLocalPushDelivered,
+} from '../utils/loyaltyNotifications';
 
 export type { AppTab } from '../types';
 
@@ -152,6 +182,7 @@ interface AppContextType {
 
   // Tenants / Businesses
   businesses: Business[];
+  managedBusinesses: Business[];
   currentBusiness: Business | null;
   switchBusiness: (businessId: string) => void;
   registerBusiness: (newBiz: Omit<Business, 'id' | 'status' | 'createdAt'>) => Promise<Business>;
@@ -159,6 +190,8 @@ interface AppContextType {
   setTenantStatus: (businessId: string, status: TenantStatus) => void;
   changeTenantPlan: (businessId: string, planId: string) => void;
   deleteBusiness: (businessId: string) => void;
+  isNewUnitModalOpen: boolean;
+  setIsNewUnitModalOpen: (open: boolean) => void;
 
   // SaaS Plans Management
   saasPlans: SaaSPlan[];
@@ -196,7 +229,27 @@ interface AppContextType {
   addAppointment: (
     app: Omit<Appointment, 'id'>
   ) => { success: boolean; error?: string; appointment?: Appointment };
-  updateAppointmentStatus: (id: string, status: AppointmentStatus) => void;
+  addMultiServiceAppointment: (data: {
+    businessId: string;
+    clientId: string;
+    clientName: string;
+    clientPhone: string;
+    clientEmail?: string;
+    date: string;
+    startTime: string;
+    notes?: string;
+    status?: AppointmentStatus;
+    items: Array<{
+      serviceId: string;
+      professionalId: string;
+    }>;
+  }) => {
+    success: boolean;
+    error?: string;
+    appointments?: Appointment[];
+    comanda?: Comanda;
+  };
+  updateAppointmentStatus: (id: string, status: AppointmentStatus, cancelReason?: string) => void;
   updateAppointment: (app: Appointment) => { success: boolean; error?: string };
 
   clients: Client[];
@@ -208,6 +261,23 @@ interface AppContextType {
   updateClientTags: (clientId: string, tags: string[]) => void;
   toggleClientTag: (clientId: string, tag: string) => void;
 
+  // Cartão Fidelidade Virtual
+  awardClientLoyaltyPoints: (
+    clientId: string,
+    points: number,
+    description: string,
+    meta?: {
+      serviceName?: string;
+      appointmentId?: string;
+      comandaId?: string;
+      comandaItemId?: string;
+      authorName?: string;
+    }
+  ) => void;
+  redeemClientLoyaltyReward: (clientId: string, authorName?: string) => { success: boolean; error?: string };
+  adjustClientLoyaltyPoints: (clientId: string, delta: number, reason?: string, authorName?: string) => void;
+  updateBusinessLoyaltyConfig: (businessId: string, config: LoyaltyConfig) => void;
+
   comandas: Comanda[];
   activeComandas: Comanda[];
   createOrUpdateComanda: (comanda: Comanda) => void;
@@ -216,10 +286,20 @@ interface AppContextType {
     paymentMethod: 'pix' | 'cartao_credito' | 'cartao_debito' | 'dinheiro',
     discount?: number
   ) => void;
+  cancelComanda: (id: string, reason?: string) => void;
+  reopenComanda: (id: string) => void;
 
   notifications: NotificationItem[];
   markNotificationRead: (id: string) => void;
   addNotification: (item: Omit<NotificationItem, 'id' | 'read' | 'time'>) => void;
+  loyaltyNotifications: LoyaltyMilestoneNotification[];
+  activeLoyaltyNotifications: LoyaltyMilestoneNotification[];
+  markLoyaltyNotificationRead: (id: string) => void;
+  sendLoyaltyMilestoneNotification: (
+    clientId: string,
+    milestonePercent: 50 | 90,
+    options?: { channelOverride?: LoyaltyNotificationChannel; isManualOrTest?: boolean }
+  ) => Promise<LoyaltyMilestoneNotification | null>;
 
   // Search filter
   searchQuery: string;
@@ -425,6 +505,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const validTabs: AppTab[] = [
         'dashboard',
         'agenda',
+        'fila',
         'servicos',
         'profissionais',
         'comandas',
@@ -432,6 +513,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         'relatorios',
         'planos',
         'configuracoes',
+        'unidades',
       ];
       if (validTabs.includes(tabName)) {
         setActiveTabState(tabName);
@@ -446,6 +528,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       const validTabs: AppTab[] = [
         'dashboard',
         'agenda',
+        'fila',
         'servicos',
         'profissionais',
         'comandas',
@@ -453,6 +536,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         'relatorios',
         'planos',
         'configuracoes',
+        'unidades',
       ];
       const tabName = currentPath.replace('/app/gerente/', '').replace('/app/gerente', '').split('/')[0] as AppTab;
       if (tabName && validTabs.includes(tabName)) {
@@ -792,6 +876,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [clients, setClients] = useState<Client[]>([]);
   const [comandas, setComandas] = useState<Comanda[]>([]);
   const [notifications, setNotifications] = useState<NotificationItem[]>([]);
+  const [loyaltyNotifications, setLoyaltyNotifications] = useState<LoyaltyMilestoneNotification[]>([]);
   const [reviews, setReviews] = useState<Review[]>([]);
   const [queueItems, setQueueItems] = useState<VirtualQueueItem[]>([]);
   const [isNewQueueModalOpen, setIsNewQueueModalOpen] = useState(false);
@@ -813,6 +898,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
   const [isNewStudioModalOpen, setIsNewStudioModalOpen] = useState(false);
   const [isPlansModalOpen, setIsPlansModalOpen] = useState(false);
+  const [isNewUnitModalOpen, setIsNewUnitModalOpen] = useState(false);
 
   // Real-time synchronization exclusively with Firebase Firestore collections
   useEffect(() => {
@@ -943,6 +1029,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn('Firestore virtualQueue listener error:', error);
     });
 
+    // 11. Real-time listener for loyalty milestone notifications
+    const unsubLoyaltyNotifs = onSnapshot(collection(db, 'notifications'), (snapshot) => {
+      const firestoreNotifs: LoyaltyMilestoneNotification[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as LoyaltyMilestoneNotification;
+        if (data && data.id && data.clientId && data.milestonePercent) {
+          firestoreNotifs.push(data);
+        }
+      });
+      firestoreNotifs.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+      setLoyaltyNotifications(firestoreNotifs);
+    }, (error) => {
+      console.warn('Firestore notifications listener error:', error);
+    });
+
     return () => {
       unsubPlans();
       unsubBiz();
@@ -953,15 +1054,97 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       unsubComandas();
       unsubReviews();
       unsubQueue();
+      unsubLoyaltyNotifs();
     };
   }, []);
 
   const currentBusiness: Business | null =
     businesses.find((b) => b.id === currentBusinessId) || businesses[0] || null;
 
-  const activeProfessionals = currentBusiness
-    ? professionals.filter((p) => p.businessId === currentBusiness.id)
-    : [];
+  // Sincroniza currentClient em tempo real caso haja atualizações no Firestore (ex: pontos de fidelidade)
+  useEffect(() => {
+    if (!currentClient) return;
+    const latest = clients.find((c) => c.id === currentClient.id);
+    if (latest && latest.updatedAt && latest.updatedAt !== currentClient.updatedAt) {
+      setCurrentClient(latest);
+      setStored('clientUser', latest);
+    }
+  }, [clients, currentClient]);
+
+  // Estabelecimentos administráveis pelo usuário / CEO / gestor logado
+  const managedBusinesses = useMemo<Business[]>(() => {
+    // SuperAdmin ou CEO da plataforma possui supervisão de todas as unidades
+    if (
+      isSuperAdminAuthenticated ||
+      activeClaims?.role === 'super_admin' ||
+      firebaseUser?.email === SUPER_ADMIN_CREDENTIALS.email ||
+      firebaseUser?.email === 'pedrocampos.adv@gmail.com'
+    ) {
+      return businesses;
+    }
+
+    const userEmail = (activeClaims?.email || firebaseUser?.email || '').trim().toLowerCase();
+    const currOwner = (currentBusiness?.ownerEmail || '').trim().toLowerCase();
+    const currMgr = (currentBusiness?.managerEmail || '').trim().toLowerCase();
+    const targetEmail = userEmail || currOwner || currMgr;
+
+    if (!targetEmail && currentBusiness) {
+      return businesses.filter(
+        (b) =>
+          b.id === currentBusiness.id ||
+          (b.parentId && (b.parentId === currentBusiness.id || b.parentId === currentBusiness.parentId))
+      );
+    }
+
+    const filtered = businesses.filter((b) => {
+      const bOwner = (b.ownerEmail || '').trim().toLowerCase();
+      const bMgr = (b.managerEmail || '').trim().toLowerCase();
+      const matchesEmail =
+        (targetEmail && (bOwner === targetEmail || bMgr === targetEmail)) ||
+        (currOwner && bOwner === currOwner);
+
+      const sharesParent =
+        currentBusiness &&
+        (b.id === currentBusiness.id ||
+          (b.parentId && (b.parentId === currentBusiness.id || b.parentId === currentBusiness.parentId)));
+
+      return Boolean(matchesEmail || sharesParent);
+    });
+
+    if (filtered.length > 0) return filtered;
+    return currentBusiness ? [currentBusiness] : businesses.slice(0, 1);
+  }, [
+    businesses,
+    isSuperAdminAuthenticated,
+    activeClaims?.role,
+    activeClaims?.email,
+    firebaseUser?.email,
+    currentBusiness,
+  ]);
+
+  const activeProfessionals = useMemo(() => {
+    if (!currentBusiness) return [];
+    const bizPros = professionals.filter((p) => p.businessId === currentBusiness.id);
+    const bizComandas = comandas.filter((c) => c.businessId === currentBusiness.id);
+    const bizAppointments = appointments.filter((a) => a.businessId === currentBusiness.id);
+    const monthPrefix = new Date().toISOString().slice(0, 7);
+
+    return bizPros.map((pro) => {
+      const live = computeProfessionalMonthMetrics(
+        pro.id,
+        bizComandas,
+        bizAppointments,
+        services,
+        bizPros,
+        monthPrefix
+      );
+      return {
+        ...pro,
+        totalEarningsMonth: Math.round(live.commissionEarnings * 100) / 100,
+        appointmentsCountMonth: live.appointmentsCount,
+      };
+    });
+  }, [currentBusiness, professionals, comandas, appointments, services]);
 
   // Current logged in professional representation based on role
   const [currentProId, setCurrentProId] = useState<string>('');
@@ -1001,6 +1184,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const activeQueueItems = currentBusiness
     ? queueItems.filter((q) => q.businessId === currentBusiness.id)
     : [];
+  const activeLoyaltyNotifications = currentBusiness
+    ? loyaltyNotifications.filter((n) => n.businessId === currentBusiness.id)
+    : [];
 
   const switchBusiness = (businessId: string) => {
     setCurrentBusinessId(businessId);
@@ -1022,6 +1208,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const mgrPass = (newBiz.managerPassword || 'gerente123').trim();
     const mgrName = (newBiz.managerName || `Gestor(a) - ${newBiz.name}`).trim();
 
+    const ownerEmail = (
+      newBiz.ownerEmail ||
+      activeClaims?.email ||
+      firebaseUser?.email ||
+      currentBusiness?.ownerEmail ||
+      currentBusiness?.managerEmail ||
+      mgrEmail
+    ).trim().toLowerCase();
+    const ownerName = (
+      newBiz.ownerName ||
+      activeClaims?.name ||
+      currentBusiness?.ownerName ||
+      mgrName
+    ).trim();
+
     const created: Business = {
       ...newBiz,
       id,
@@ -1037,6 +1238,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       accentColor: newBiz.accentColor || '#0f172a',
       status: 'ativo',
       createdAt: today,
+      // Configurações de Multi-Unidades e Franquia
+      ownerEmail,
+      ownerName,
+      isHeadquarters: newBiz.isHeadquarters !== undefined ? newBiz.isHeadquarters : (businesses.length === 0),
+      unitCode: newBiz.unitCode?.trim() || undefined,
+      parentId: newBiz.parentId || (newBiz.isHeadquarters === false && currentBusiness?.id ? currentBusiness.id : undefined),
       // Métricas operacionais explicitamente zeradas
       monthlyRevenue: 0,
       monthlyRevenueGoal: typeof newBiz.monthlyRevenueGoal === 'number' ? newBiz.monthlyRevenueGoal : 0,
@@ -1045,12 +1252,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       totalServicesCount: 0,
       totalComandasCount: 0,
       totalRevenueRealized: 0,
-      avatarUrl: undefined,
-      address: undefined,
-      neighborhood: undefined,
-      zipCode: undefined,
-      latitude: undefined,
-      longitude: undefined,
+      avatarUrl: newBiz.avatarUrl || undefined,
+      address: newBiz.address?.trim() || undefined,
+      neighborhood: newBiz.neighborhood?.trim() || undefined,
+      zipCode: newBiz.zipCode?.trim() || undefined,
+      latitude: newBiz.latitude,
+      longitude: newBiz.longitude,
       managerName: mgrName,
       managerEmail: mgrEmail,
       managerPassword: mgrPass,
@@ -1082,7 +1289,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     // 4. Persist Business to Firestore with monthly revenue starting at R$ 0,00
     await syncBusinessToFirestore(created);
 
-    // 3. Cadastra o gestor responsável como primeiro usuário administrativo do negócio (dados zerados)
+    // 5. Cadastra o gestor responsável como primeiro usuário administrativo do negócio (dados zerados)
     const defaultOwner: Professional = {
       id: `pro_${Date.now()}`,
       businessId: id,
@@ -1103,7 +1310,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     };
     await syncProfessionalToFirestore(defaultOwner);
 
-    // 4. Início de Teste Gratuito 100% Zerado:
+    // 6. Início de Teste Gratuito 100% Zerado:
     // Sem clientes mock, sem agendamentos simulados, sem comandas e sem serviços fictícios.
     // O novo assinante inicia com espaço totalmente limpo e pronto para configurar.
     setBusinesses((prev) => [created, ...prev.filter((b) => b.id !== id)]);
@@ -1113,19 +1320,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAppointments((prev) => prev.filter((a) => a.businessId !== id));
     setComandas((prev) => prev.filter((c) => c.businessId !== id));
     setCurrentBusinessId(id);
-    switchRole('gerente');
+    setStored('currentBizId', id);
 
-    setSimulatedClaims({
-      role: 'tenant_manager',
-      tenant_id: id,
-      email: mgrEmail,
-      name: mgrName,
-      issuedAt: Date.now(),
-    });
+    // Se não for super admin master, atualiza claims para o novo tenant gerenciado
+    if (activeClaims?.role !== 'super_admin' && !isSuperAdminAuthenticated) {
+      switchRole('gerente');
+      setStored('currentRole', 'gerente');
+      setSimulatedClaims({
+        role: 'tenant_manager',
+        tenant_id: id,
+        email: activeClaims?.email || mgrEmail,
+        name: activeClaims?.name || mgrName,
+        issuedAt: Date.now(),
+      });
+    }
 
     addNotification({
-      title: 'Teste Gratuito Iniciado com Dados Zerados!',
-      message: `${newBiz.name} foi criado no plano ${newBiz.planId.toUpperCase()} com a base 100% limpa e pronta para uso.`,
+      title: 'Unidade Registrada com Sucesso!',
+      message: `${newBiz.name} (${created.isHeadquarters ? 'Matriz' : 'Filial'}) foi configurada e vinculada à sua gestão.`,
       type: 'system',
     });
 
@@ -1783,6 +1995,17 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       console.warn('Verificação de e-mail único no Firestore:', e);
     }
 
+    // Validação de unicidade de telefone antes de cadastrar novo cliente
+    if (!data.existingClientId) {
+      const duplicateClient = findDuplicateClientByPhone(clients, phone);
+      if (duplicateClient) {
+        return {
+          success: false,
+          error: `O telefone informado já possui cadastro no Studio Digital (ex: cadastro rápido por um profissional). Por favor, complete seu cadastro na seção 'Complete seu cadastro'.`,
+        };
+      }
+    }
+
     // 1. Criar no Firebase Auth
     try {
       await createClientUserInFirebaseAuth(email, password, name, data.photoURL);
@@ -1933,6 +2156,49 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAppointments((prev) => prev.map((a) => (a.id === appointmentId ? updatedApp : a)));
     await syncAppointmentToFirestore(updatedApp);
 
+    // Repercute o cancelamento nas comandas abertas associadas
+    const nowIso = new Date().toISOString();
+    const reasonText = reason ? `Cancelado pelo cliente: ${reason}` : 'Cancelado pelo cliente no portal';
+
+    setComandas((prev) =>
+      prev.map((c) => {
+        const matchesApp =
+          c.id === target.comandaId ||
+          c.appointmentId === appointmentId ||
+          (c.appointmentIds && c.appointmentIds.includes(appointmentId)) ||
+          (c.clientPhone && c.clientPhone === target.clientPhone && c.businessId === target.businessId && c.createdAt.startsWith(target.date));
+        if (matchesApp && c.status === 'aberta') {
+          const remainingItems = c.items.filter((it) => it.appointmentId !== appointmentId);
+          if (c.appointmentIds && c.appointmentIds.length > 1 && remainingItems.length > 0) {
+            const newSubtotal = remainingItems.reduce((acc, it) => acc + it.price * (it.quantity || 1), 0);
+            const newTotal = Math.max(0, newSubtotal - (c.discount || 0));
+            const updatedPartialCmd: Comanda = {
+              ...c,
+              items: remainingItems,
+              appointmentIds: c.appointmentIds.filter((aid) => aid !== appointmentId),
+              appointmentId: c.appointmentId === appointmentId ? (c.appointmentIds.find((aid) => aid !== appointmentId) || c.appointmentId) : c.appointmentId,
+              professionalIds: getComandaProfessionalIds({ ...c, items: remainingItems }),
+              professionalName: getComandaProfessionalsLabel({ ...c, items: remainingItems }, professionals),
+              subtotal: newSubtotal,
+              total: newTotal,
+            };
+            syncComandaToFirestore(updatedPartialCmd).catch(console.warn);
+            return updatedPartialCmd;
+          }
+
+          const updatedCmd: Comanda = {
+            ...c,
+            status: 'cancelada',
+            canceledAt: nowIso,
+            cancelReason: reasonText,
+          };
+          syncComandaToFirestore(updatedCmd).catch(console.warn);
+          return updatedCmd;
+        }
+        return c;
+      })
+    );
+
     addNotification({
       title: 'Agendamento Cancelado',
       message: `Seu agendamento para ${target.serviceName} no dia ${target.date} às ${target.startTime} foi cancelado.`,
@@ -1986,6 +2252,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
 
     const appointmentId = `app_${Date.now()}`;
+    const comandaId = `cmd_${Date.now()}`;
     const newAppointment: Appointment = {
       id: appointmentId,
       businessId: data.businessId,
@@ -2006,19 +2273,37 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       status: 'agendado',
       paymentStatus: 'pendente',
       notes: data.notes || '',
+      comandaId,
     };
 
     setAppointments((prev) => [newAppointment, ...prev]);
 
+    const itemCommPct = resolveItemCommissionPercentage(
+      {
+        id: 'tmp',
+        name: service.name,
+        type: 'servico',
+        price: service.price,
+        quantity: 1,
+        serviceId: service.id,
+        professionalId: professional.id,
+      },
+      services,
+      professionals,
+      professional.id
+    );
+
     // Criação de comanda associada
     const newComanda: Comanda = {
-      id: `cmd_${Date.now()}`,
+      id: comandaId,
       businessId: data.businessId,
       appointmentId,
+      appointmentIds: [appointmentId],
       clientName: currentClient.name,
       clientPhone: currentClient.phone,
       professionalId: professional.id,
       professionalName: professional.name,
+      professionalIds: [professional.id],
       items: [
         {
           id: `item_${Date.now()}`,
@@ -2026,6 +2311,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           type: 'servico',
           price: service.price,
           quantity: 1,
+          serviceId: service.id,
+          professionalId: professional.id,
+          professionalName: professional.name,
+          commissionPercentage: itemCommPct,
+          commissionValue: (service.price * itemCommPct) / 100,
+          appointmentId,
         },
       ],
       subtotal: service.price,
@@ -2192,26 +2483,60 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       return { success: false, error: conflict.message };
     }
 
-    const id = `app_${Date.now()}`;
-    const newAppointment: Appointment = { ...app, id };
+    const ts = Date.now();
+    const id = `app_${ts}`;
+    const comandaId = app.comandaId || `cmd_${ts}`;
+    const proName =
+      app.professionalName ||
+      professionals.find((p) => p.id === app.professionalId)?.name ||
+      'Profissional';
+
+    const newAppointment: Appointment = {
+      ...app,
+      id,
+      professionalName: proName,
+      comandaId,
+    };
     setAppointments((prev) => [newAppointment, ...prev]);
 
+    const commPct = resolveItemCommissionPercentage(
+      {
+        id: 'tmp',
+        name: app.serviceName,
+        type: 'servico',
+        price: app.price,
+        quantity: 1,
+        serviceId: app.serviceId,
+        professionalId: app.professionalId,
+      },
+      services,
+      professionals,
+      app.professionalId
+    );
+
     const newComanda: Comanda = {
-      id: `cmd_${Date.now()}`,
+      id: comandaId,
       businessId: app.businessId,
       appointmentId: id,
+      appointmentIds: [id],
       clientName: app.clientName,
       clientPhone: app.clientPhone,
       professionalId: app.professionalId,
-      professionalName:
-        professionals.find((p) => p.id === app.professionalId)?.name || 'Profissional',
+      professionalName: proName,
+      professionalIds: [app.professionalId],
       items: [
         {
-          id: `item_${Date.now()}`,
+          id: `item_${ts}`,
           name: app.serviceName,
           type: 'servico',
           price: app.price,
           quantity: 1,
+          serviceId: app.serviceId,
+          professionalId: app.professionalId,
+          professionalName: proName,
+          commissionPercentage: commPct,
+          commissionValue: (app.price * commPct) / 100,
+          appointmentId: id,
         },
       ],
       subtotal: app.price,
@@ -2255,24 +2580,361 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     return { success: true, appointment: newAppointment };
   };
 
-  const updateAppointmentStatus = (id: string, status: AppointmentStatus) => {
-    setAppointments((prev) =>
-      prev.map((a) => (a.id === id ? { ...a, status } : a))
+  const addMultiServiceAppointment = (data: {
+    businessId: string;
+    clientId: string;
+    clientName: string;
+    clientPhone: string;
+    clientEmail?: string;
+    date: string;
+    startTime: string;
+    notes?: string;
+    status?: AppointmentStatus;
+    items: Array<{
+      serviceId: string;
+      professionalId: string;
+    }>;
+  }): {
+    success: boolean;
+    error?: string;
+    appointments?: Appointment[];
+    comanda?: Comanda;
+  } => {
+    if (!data.items || data.items.length === 0) {
+      return { success: false, error: 'Selecione ao menos um serviço para agendar.' };
+    }
+
+    // 1. Resolve sequência contínua de horários e valida conflitos de cada item
+    const resolvedSteps: Array<{
+      service: Service;
+      professional: Professional;
+      startTime: string;
+      endTime: string;
+    }> = [];
+
+    let cursorMinutes = timeToMinutes(data.startTime);
+
+    for (let i = 0; i < data.items.length; i++) {
+      const entry = data.items[i];
+      const srv = services.find((s) => s.id === entry.serviceId);
+      const pro = professionals.find((p) => p.id === entry.professionalId);
+
+      if (!srv) {
+        return { success: false, error: `Serviço do item ${i + 1} não foi encontrado.` };
+      }
+      if (!pro) {
+        return { success: false, error: `Profissional do item ${i + 1} não foi encontrado.` };
+      }
+      if (
+        srv.allowedProfessionalIds &&
+        srv.allowedProfessionalIds.length > 0 &&
+        !srv.allowedProfessionalIds.includes(pro.id)
+      ) {
+        return {
+          success: false,
+          error: `${pro.name} não está habilitado(a) para realizar "${srv.name}".`,
+        };
+      }
+
+      const duration = srv.durationMinutes || 45;
+      const stepStart = minutesToTime(cursorMinutes);
+      const stepEnd = minutesToTime(cursorMinutes + duration);
+
+      // Valida conflito contra agendamentos já existentes
+      const conflict = checkAppointmentConflict({
+        appointments,
+        professionals,
+        date: data.date,
+        startTime: stepStart,
+        endTime: stepEnd,
+        professionalId: pro.id,
+        client: {
+          id: data.clientId,
+          name: data.clientName,
+          phone: data.clientPhone,
+          email: data.clientEmail,
+        },
+      });
+
+      if (conflict.hasConflict) {
+        addNotification({
+          title: 'Bloqueio de Conflito de Agendamento',
+          message: `Etapa ${i + 1} (${srv.name} com ${pro.name}): ${conflict.message}`,
+          type: 'system',
+        });
+        return {
+          success: false,
+          error: `Etapa ${i + 1} (${srv.name} com ${pro.name} às ${stepStart}): ${conflict.message}`,
+        };
+      }
+
+      resolvedSteps.push({
+        service: srv,
+        professional: pro,
+        startTime: stepStart,
+        endTime: stepEnd,
+      });
+
+      cursorMinutes += duration;
+    }
+
+    // 2. Cria todos os agendamentos vinculados e a comanda unificada
+    const ts = Date.now();
+    const isMulti = resolvedSteps.length > 1;
+    const bookingGroupId = isMulti ? `grp_${ts}` : undefined;
+    const comandaId = `cmd_${ts}`;
+
+    const createdAppointments: Appointment[] = [];
+    const comandaItems: ComandaItem[] = [];
+    let subtotal = 0;
+
+    resolvedSteps.forEach((step, idx) => {
+      const appId = `app_${ts}_${idx}`;
+      const newApp: Appointment = {
+        id: appId,
+        businessId: data.businessId,
+        tenant_id: data.businessId,
+        clientId: data.clientId,
+        clientName: data.clientName,
+        clientPhone: data.clientPhone,
+        clientEmail: data.clientEmail,
+        professionalId: step.professional.id,
+        professionalName: step.professional.name,
+        serviceId: step.service.id,
+        serviceName: step.service.name,
+        durationMinutes: step.service.durationMinutes || 45,
+        date: data.date,
+        startTime: step.startTime,
+        endTime: step.endTime,
+        status: data.status || 'confirmado',
+        price: step.service.price,
+        paymentStatus: 'pendente',
+        notes: data.notes?.trim() || undefined,
+        comandaId,
+        ...(bookingGroupId
+          ? {
+              bookingGroupId,
+              groupServiceIndex: idx + 1,
+              groupTotalServices: resolvedSteps.length,
+            }
+          : {}),
+      };
+
+      createdAppointments.push(newApp);
+
+      const commPct = resolveItemCommissionPercentage(
+        {
+          id: `item_${ts}_${idx}`,
+          name: step.service.name,
+          type: 'servico',
+          price: step.service.price,
+          quantity: 1,
+          serviceId: step.service.id,
+          professionalId: step.professional.id,
+        },
+        services,
+        professionals,
+        step.professional.id
+      );
+
+      comandaItems.push({
+        id: `item_${ts}_${idx}`,
+        name: step.service.name,
+        type: 'servico',
+        price: step.service.price,
+        quantity: 1,
+        serviceId: step.service.id,
+        professionalId: step.professional.id,
+        professionalName: step.professional.name,
+        commissionPercentage: commPct,
+        commissionValue: (step.service.price * commPct) / 100,
+        appointmentId: appId,
+      });
+
+      subtotal += step.service.price;
+    });
+
+    const uniqueProIds = Array.from(new Set(resolvedSteps.map((s) => s.professional.id)));
+    const uniqueProNames = Array.from(new Set(resolvedSteps.map((s) => s.professional.name)));
+
+    const newComanda: Comanda = {
+      id: comandaId,
+      businessId: data.businessId,
+      tenant_id: data.businessId,
+      appointmentId: createdAppointments[0].id,
+      appointmentIds: createdAppointments.map((a) => a.id),
+      ...(bookingGroupId ? { bookingGroupId } : {}),
+      clientName: data.clientName,
+      clientPhone: data.clientPhone,
+      professionalId: uniqueProIds[0],
+      professionalName: uniqueProNames.join(' + '),
+      professionalIds: uniqueProIds,
+      items: comandaItems,
+      subtotal,
+      discount: 0,
+      total: subtotal,
+      status: 'aberta',
+      createdAt: `${data.date} ${data.startTime}`,
+    };
+
+    setAppointments((prev) => [...createdAppointments.slice().reverse(), ...prev]);
+    setComandas((prev) => [newComanda, ...prev]);
+
+    setClients((prev) =>
+      prev.map((c) =>
+        c.id === data.clientId
+          ? {
+              ...c,
+              totalVisits: c.totalVisits + 1,
+              lastVisit: data.date,
+            }
+          : c
+      )
     );
 
+    // Sync to Firestore
+    createdAppointments.forEach((appItem) => {
+      syncAppointmentToFirestore(appItem).catch((e) => console.warn('Sync app:', e));
+    });
+    syncComandaToFirestore(newComanda).catch((e) => console.warn('Sync cmd:', e));
+    const targetCli = clients.find((c) => c.id === data.clientId);
+    if (targetCli) {
+      syncClientToFirestore({
+        ...targetCli,
+        totalVisits: targetCli.totalVisits + 1,
+        lastVisit: data.date,
+      }).catch((e) => console.warn('Sync cli:', e));
+    }
+
+    addNotification({
+      title: isMulti ? 'Atendimento multi-serviço agendado' : 'Agendamento confirmado',
+      message: isMulti
+        ? `${data.clientName} agendou ${resolvedSteps.length} serviços em sequência (${data.startTime}–${resolvedSteps[resolvedSteps.length - 1].endTime}) com ${uniqueProNames.join(', ')}.`
+        : `${data.clientName} com ${uniqueProNames[0]} às ${data.startTime}.`,
+      type: 'booking',
+    });
+
+    return {
+      success: true,
+      appointments: createdAppointments,
+      comanda: newComanda,
+    };
+  };
+
+  const updateAppointmentStatus = (
+    id: string,
+    status: AppointmentStatus,
+    cancelReason?: string
+  ) => {
     const targetApp = appointments.find((a) => a.id === id);
+    const updatedNotes = cancelReason
+      ? targetApp?.notes
+        ? `${targetApp.notes} | Motivo: ${cancelReason}`
+        : `Motivo: ${cancelReason}`
+      : targetApp?.notes;
+
+    setAppointments((prev) =>
+      prev.map((a) => (a.id === id ? { ...a, status, notes: updatedNotes } : a))
+    );
+
     if (targetApp) {
-      syncAppointmentToFirestore({ ...targetApp, status }).catch(console.warn);
+      syncAppointmentToFirestore({ ...targetApp, status, notes: updatedNotes }).catch(console.warn);
     }
 
     if (status === 'concluido') {
       setComandas((prev) =>
-        prev.map((c) =>
-          c.appointmentId === id && c.status === 'aberta'
-            ? { ...c, total: c.subtotal - c.discount }
-            : c
-        )
+        prev.map((c) => {
+          const matchesApp =
+            c.id === targetApp?.comandaId ||
+            c.appointmentId === id ||
+            (c.appointmentIds && c.appointmentIds.includes(id));
+          return matchesApp && c.status === 'aberta'
+            ? { ...c, total: Math.max(0, c.subtotal - (c.discount || 0)) }
+            : c;
+        })
       );
+
+      if (targetApp) {
+        const biz = businesses.find((b) => b.id === targetApp.businessId) || currentBusiness;
+        const loyaltyCfg = getBusinessLoyaltyConfig(biz);
+        if (loyaltyCfg.enabled) {
+          const matchedCli = findMatchingClientForRecord(clients, targetApp.businessId, {
+            clientId: targetApp.clientId,
+            clientPhone: targetApp.clientPhone,
+            clientName: targetApp.clientName,
+          });
+          if (
+            matchedCli &&
+            !hasLoyaltyCreditForReference(matchedCli, { appointmentId: targetApp.id })
+          ) {
+            awardClientLoyaltyPoints(
+              matchedCli.id,
+              loyaltyCfg.pointsPerService,
+              `Serviço realizado: ${targetApp.serviceName}`,
+              {
+                serviceName: targetApp.serviceName,
+                appointmentId: targetApp.id,
+                comandaId: targetApp.comandaId,
+                authorName: targetApp.professionalName || 'Atendimento',
+              }
+            );
+          }
+        }
+      }
+    } else if (status === 'cancelado') {
+      const nowIso = new Date().toISOString();
+      const reasonText = cancelReason || 'Agendamento cancelado na agenda';
+
+      setComandas((prev) =>
+        prev.map((c) => {
+          const matchesApp =
+            c.id === targetApp?.comandaId ||
+            c.appointmentId === id ||
+            (c.appointmentIds && c.appointmentIds.includes(id)) ||
+            (targetApp &&
+              c.clientPhone &&
+              c.clientPhone === targetApp.clientPhone &&
+              c.businessId === targetApp.businessId &&
+              c.createdAt.startsWith(targetApp.date));
+
+          if (matchesApp && c.status === 'aberta') {
+            // Se a comanda unificada possui outros serviços ativos de outros agendamentos, remove apenas o item cancelado
+            const remainingItems = c.items.filter((it) => it.appointmentId !== id);
+            if (c.appointmentIds && c.appointmentIds.length > 1 && remainingItems.length > 0) {
+              const newSubtotal = remainingItems.reduce((acc, it) => acc + it.price * (it.quantity || 1), 0);
+              const newTotal = Math.max(0, newSubtotal - (c.discount || 0));
+              const updatedPartialCmd: Comanda = {
+                ...c,
+                items: remainingItems,
+                appointmentIds: c.appointmentIds.filter((aid) => aid !== id),
+                appointmentId: c.appointmentId === id ? (c.appointmentIds.find((aid) => aid !== id) || c.appointmentId) : c.appointmentId,
+                professionalIds: getComandaProfessionalIds({ ...c, items: remainingItems }),
+                professionalName: getComandaProfessionalsLabel({ ...c, items: remainingItems }, professionals),
+                subtotal: newSubtotal,
+                total: newTotal,
+              };
+              syncComandaToFirestore(updatedPartialCmd).catch(console.warn);
+              return updatedPartialCmd;
+            }
+
+            const updatedCmd: Comanda = {
+              ...c,
+              status: 'cancelada',
+              canceledAt: nowIso,
+              cancelReason: reasonText,
+            };
+            syncComandaToFirestore(updatedCmd).catch(console.warn);
+            return updatedCmd;
+          }
+          return c;
+        })
+      );
+
+      addNotification({
+        title: 'Comanda Atualizada / Cancelada',
+        message: `O cancelamento do agendamento de ${targetApp?.clientName || 'cliente'} foi refletido na comanda.`,
+        type: 'system',
+      });
     }
   };
 
@@ -2308,18 +2970,125 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setAppointments((prev) => prev.map((a) => (a.id === app.id ? app : a)));
     syncAppointmentToFirestore(app).catch(console.warn);
 
-    // Atualiza profissional e comanda associada caso alterado
-    setComandas((prev) =>
-      prev.map((c) =>
-        c.appointmentId === app.id
-          ? {
-              ...c,
-              professionalId: app.professionalId,
-              professionalName: app.professionalName || c.professionalName,
+    if (app.status === 'concluido') {
+      const biz = businesses.find((b) => b.id === app.businessId) || currentBusiness;
+      const loyaltyCfg = getBusinessLoyaltyConfig(biz);
+      if (loyaltyCfg.enabled) {
+        const matchedCli = findMatchingClientForRecord(clients, app.businessId, {
+          clientId: app.clientId,
+          clientPhone: app.clientPhone,
+          clientName: app.clientName,
+        });
+        if (matchedCli && !hasLoyaltyCreditForReference(matchedCli, { appointmentId: app.id })) {
+          awardClientLoyaltyPoints(
+            matchedCli.id,
+            loyaltyCfg.pointsPerService,
+            `Serviço realizado: ${app.serviceName}`,
+            {
+              serviceName: app.serviceName,
+              appointmentId: app.id,
+              comandaId: app.comandaId,
+              authorName: app.professionalName || 'Atendimento',
             }
-          : c
-      )
-    );
+          );
+        }
+      }
+    }
+
+    // Se o agendamento foi editado para 'cancelado', atualiza ou cancela a comanda vinculada
+    if (app.status === 'cancelado') {
+      const nowIso = new Date().toISOString();
+      setComandas((prev) =>
+        prev.map((c) => {
+          const matchesApp =
+            c.id === app.comandaId ||
+            c.appointmentId === app.id ||
+            (c.appointmentIds && c.appointmentIds.includes(app.id)) ||
+            (c.clientPhone &&
+              c.clientPhone === app.clientPhone &&
+              c.businessId === app.businessId &&
+              c.createdAt.startsWith(app.date));
+
+          if (matchesApp && c.status === 'aberta') {
+            const remainingItems = c.items.filter((it) => it.appointmentId !== app.id);
+            if (c.appointmentIds && c.appointmentIds.length > 1 && remainingItems.length > 0) {
+              const newSubtotal = remainingItems.reduce((acc, it) => acc + it.price * (it.quantity || 1), 0);
+              const newTotal = Math.max(0, newSubtotal - (c.discount || 0));
+              const updatedPartialCmd: Comanda = {
+                ...c,
+                items: remainingItems,
+                appointmentIds: c.appointmentIds.filter((aid) => aid !== app.id),
+                professionalIds: getComandaProfessionalIds({ ...c, items: remainingItems }),
+                professionalName: getComandaProfessionalsLabel({ ...c, items: remainingItems }, professionals),
+                subtotal: newSubtotal,
+                total: newTotal,
+              };
+              syncComandaToFirestore(updatedPartialCmd).catch(console.warn);
+              return updatedPartialCmd;
+            }
+
+            const updatedCmd: Comanda = {
+              ...c,
+              status: 'cancelada',
+              canceledAt: nowIso,
+              cancelReason: 'Agendamento cancelado na edição',
+            };
+            syncComandaToFirestore(updatedCmd).catch(console.warn);
+            return updatedCmd;
+          }
+          return c;
+        })
+      );
+    } else {
+      // Atualiza profissional no item específico da comanda associada caso alterado
+      setComandas((prev) =>
+        prev.map((c) => {
+          const matchesApp =
+            c.id === app.comandaId ||
+            c.appointmentId === app.id ||
+            (c.appointmentIds && c.appointmentIds.includes(app.id));
+          if (!matchesApp) return c;
+
+          const newProName =
+            app.professionalName ||
+            professionals.find((p) => p.id === app.professionalId)?.name ||
+            c.professionalName;
+
+          const updatedItems = c.items.map((it) => {
+            const isTargetItem =
+              it.appointmentId === app.id ||
+              (!it.appointmentId && c.items.length === 1 && c.appointmentId === app.id);
+            if (!isTargetItem) return it;
+            const commPct = resolveItemCommissionPercentage(
+              { ...it, professionalId: app.professionalId, commissionPercentage: undefined },
+              services,
+              professionals,
+              app.professionalId
+            );
+            return {
+              ...it,
+              professionalId: app.professionalId,
+              professionalName: newProName,
+              commissionPercentage: commPct,
+              commissionValue: (it.price * (it.quantity || 1) * commPct) / 100,
+            };
+          });
+
+          const nextProIds = getComandaProfessionalIds({ ...c, items: updatedItems });
+          const nextProLabel = getComandaProfessionalsLabel({ ...c, items: updatedItems }, professionals);
+
+          const updatedCmd: Comanda = {
+            ...c,
+            items: updatedItems,
+            professionalId: nextProIds[0] || app.professionalId,
+            professionalIds: nextProIds,
+            professionalName: nextProLabel,
+          };
+          syncComandaToFirestore(updatedCmd).catch(console.warn);
+          return updatedCmd;
+        })
+      );
+    }
 
     addNotification({
       title: 'Agendamento Atualizado',
@@ -2552,6 +3321,406 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     });
   };
 
+  // =====================================================================
+  // DISPARO DE NOTIFICAÇÃO PUSH & E-MAIL (MARCOS DE 50% E 90% FIDELIDADE)
+  // =====================================================================
+  const dispatchMilestoneNotificationRecord = async (
+    targetClient: Client,
+    milestonePercent: 50 | 90,
+    options?: {
+      channelOverride?: LoyaltyNotificationChannel;
+      isManualOrTest?: boolean;
+    }
+  ): Promise<LoyaltyMilestoneNotification | null> => {
+    const biz = businesses.find((b) => b.id === targetClient.businessId) || currentBusiness;
+    const cfg = getBusinessLoyaltyConfig(biz);
+    const channel: LoyaltyNotificationChannel =
+      options?.channelOverride || cfg.notificationChannels || 'both';
+    const studioName = biz?.tradeName || biz?.name || 'Studio Digital';
+    const points = Math.max(0, Math.floor(targetClient.loyaltyPoints ?? 0));
+    const threshold = Math.max(2, cfg.rewardThreshold);
+    const cycle = Math.max(0, Math.floor(targetClient.loyaltyRewardsRedeemed ?? 0));
+
+    const copy = buildLoyaltyMilestoneCopy({
+      clientName: targetClient.name,
+      businessName: studioName,
+      milestonePercent,
+      points,
+      threshold,
+      rewardTitle: cfg.rewardTitle,
+    });
+
+    const includesPush = channel === 'push' || channel === 'both';
+    const includesEmail = channel === 'email' || channel === 'both';
+
+    const notifId = `loynotif_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
+    const nowIso = new Date().toISOString();
+
+    const baseRecord: LoyaltyMilestoneNotification = {
+      id: notifId,
+      businessId: targetClient.businessId,
+      tenant_id: targetClient.tenant_id || targetClient.businessId,
+      clientId: targetClient.id,
+      clientName: targetClient.name,
+      ...(targetClient.email ? { clientEmail: targetClient.email } : {}),
+      ...(targetClient.phone ? { clientPhone: targetClient.phone } : {}),
+      milestonePercent,
+      cycle,
+      pointsAtDispatch: points,
+      rewardThreshold: threshold,
+      rewardTitle: cfg.rewardTitle,
+      channel,
+      title: copy.title,
+      message: copy.message,
+      emailSubject: copy.emailSubject,
+      emailBody: copy.emailBody,
+      pushStatus: includesPush ? 'enviado' : 'nao_aplicavel',
+      emailStatus: includesEmail
+        ? targetClient.email && targetClient.email.includes('@')
+          ? 'configurar_smtp'
+          : 'sem_email'
+        : 'nao_aplicavel',
+      emailStatusDetail: includesEmail
+        ? targetClient.email && targetClient.email.includes('@')
+          ? 'Preparando envio de e-mail...'
+          : 'Cliente sem e-mail cadastrado.'
+        : 'Canal de e-mail desativado nas regras.',
+      status: 'enviado',
+      ctaAction: 'agendar',
+      isManualOrTest: Boolean(options?.isManualOrTest),
+      createdAt: nowIso,
+    };
+
+    setLoyaltyNotifications((prev) => [baseRecord, ...prev]);
+    syncLoyaltyNotificationToFirestore(baseRecord).catch(console.warn);
+
+    // Se o próprio cliente estiver logado nesta sessão e autorizou Web Push no navegador, dispara push imediato
+    if (includesPush && currentClient?.id === targetClient.id) {
+      const pushed = triggerBrowserPushNotification(copy.title, copy.message, notifId, () => {
+        if (window.location.pathname !== '/cliente/portal') {
+          navigateTo('/cliente/portal');
+        }
+      });
+      if (pushed) {
+        markLocalPushDelivered(notifId);
+      }
+    }
+
+    // Disparo real via backend endpoint (Resend / Webhook) quando canal inclui e-mail
+    let finalRecord = baseRecord;
+    if (includesEmail) {
+      const bookingUrl = typeof window !== 'undefined' ? `${window.location.origin}/cliente/portal` : undefined;
+      const emailResult = await dispatchLoyaltyMilestoneEmail({
+        to: targetClient.email,
+        subject: copy.emailSubject,
+        body: copy.emailBody,
+        clientName: targetClient.name,
+        studioName,
+        milestonePercent,
+        bookingUrl,
+      });
+
+      finalRecord = {
+        ...baseRecord,
+        emailStatus: emailResult.emailStatus,
+        emailStatusDetail: emailResult.emailStatusDetail,
+      };
+      setLoyaltyNotifications((prev) =>
+        prev.map((item) => (item.id === notifId ? finalRecord : item))
+      );
+      syncLoyaltyNotificationToFirestore(finalRecord).catch(console.warn);
+    }
+
+    addNotification({
+      title: `Alerta Fidelidade ${milestonePercent}% (${targetClient.name})`,
+      message: `${copy.title} — Canal: ${
+        channel === 'both' ? 'Push + E-mail' : channel === 'push' ? 'Push' : 'E-mail'
+      }.`,
+      type: 'reminder',
+    });
+
+    return finalRecord;
+  };
+
+  const sendLoyaltyMilestoneNotification = async (
+    clientId: string,
+    milestonePercent: 50 | 90,
+    options?: { channelOverride?: LoyaltyNotificationChannel; isManualOrTest?: boolean }
+  ): Promise<LoyaltyMilestoneNotification | null> => {
+    const targetCli = clients.find((c) => c.id === clientId);
+    if (!targetCli) return null;
+    return dispatchMilestoneNotificationRecord(targetCli, milestonePercent, {
+      channelOverride: options?.channelOverride,
+      isManualOrTest: options?.isManualOrTest ?? true,
+    });
+  };
+
+  const markLoyaltyNotificationRead = (id: string) => {
+    const nowIso = new Date().toISOString();
+    let updatedTarget: LoyaltyMilestoneNotification | null = null;
+    setLoyaltyNotifications((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) return item;
+        updatedTarget = { ...item, status: 'lida', readAt: item.readAt || nowIso };
+        return updatedTarget;
+      })
+    );
+    if (updatedTarget) {
+      syncLoyaltyNotificationToFirestore(updatedTarget).catch(console.warn);
+    }
+  };
+
+  const awardClientLoyaltyPoints = (
+    clientId: string,
+    points: number,
+    description: string,
+    meta?: {
+      serviceName?: string;
+      appointmentId?: string;
+      comandaId?: string;
+      comandaItemId?: string;
+      authorName?: string;
+    }
+  ) => {
+    if (!clientId || points <= 0) return;
+    let mutatedClient: Client | null = null;
+    let reachedRewardNow = false;
+    let rewardThreshold = 10;
+    let triggeredMilestone: 50 | 90 | null = null;
+
+    setClients((prev) =>
+      prev.map((c) => {
+        if (c.id !== clientId) return c;
+        if (
+          meta &&
+          hasLoyaltyCreditForReference(c, {
+            appointmentId: meta.appointmentId,
+            comandaId: meta.comandaId,
+            comandaItemId: meta.comandaItemId,
+          })
+        ) {
+          return c;
+        }
+        const biz = businesses.find((b) => b.id === c.businessId) || currentBusiness;
+        const cfg = getBusinessLoyaltyConfig(biz);
+        rewardThreshold = cfg.rewardThreshold;
+        const prevPts = Math.max(0, Math.floor(c.loyaltyPoints ?? 0));
+
+        const { updatedClient } = applyLoyaltyMutation(c, {
+          type: 'earn',
+          pointsDelta: Math.round(points),
+          description,
+          serviceName: meta?.serviceName,
+          appointmentId: meta?.appointmentId,
+          comandaId: meta?.comandaId,
+          comandaItemId: meta?.comandaItemId,
+          authorName: meta?.authorName,
+        });
+
+        const nextPts = Math.max(0, Math.floor(updatedClient.loyaltyPoints ?? 0));
+        if (prevPts < rewardThreshold && nextPts >= rewardThreshold) {
+          reachedRewardNow = true;
+        }
+
+        let finalClient = updatedClient;
+        if (cfg.enabled && cfg.milestoneNotificationsEnabled !== false) {
+          const cycle = Math.max(0, Math.floor(updatedClient.loyaltyRewardsRedeemed ?? 0));
+          const detection = detectLoyaltyMilestonesCrossed(
+            prevPts,
+            nextPts,
+            cfg.rewardThreshold,
+            cycle,
+            updatedClient.loyaltyNotifiedMilestones
+          );
+          if (detection.milestoneToTrigger) {
+            triggeredMilestone = detection.milestoneToTrigger;
+            finalClient = {
+              ...updatedClient,
+              loyaltyNotifiedMilestones: detection.updatedTracker,
+            };
+          }
+        }
+
+        mutatedClient = finalClient;
+        syncClientToFirestore(finalClient).catch(console.warn);
+        return finalClient;
+      })
+    );
+
+    if (mutatedClient) {
+      const cliObj = mutatedClient as Client;
+      addNotification({
+        title: reachedRewardNow
+          ? 'Cartão Fidelidade Completo!'
+          : `+${Math.round(points)} pt(s) no Cartão Fidelidade`,
+        message: reachedRewardNow
+          ? `${cliObj.name} atingiu ${rewardThreshold} pontos e liberou o prêmio do Cartão Fidelidade!`
+          : `${cliObj.name} acumulou +${Math.round(points)} ponto(s): ${description}.`,
+        type: 'system',
+      });
+
+      if (triggeredMilestone) {
+        dispatchMilestoneNotificationRecord(cliObj, triggeredMilestone, {
+          isManualOrTest: false,
+        }).catch(console.warn);
+      }
+    }
+  };
+
+  const redeemClientLoyaltyReward = (
+    clientId: string,
+    authorName?: string
+  ): { success: boolean; error?: string } => {
+    const targetCli = clients.find((c) => c.id === clientId);
+    if (!targetCli) {
+      return { success: false, error: 'Cliente não encontrado.' };
+    }
+    const biz = businesses.find((b) => b.id === targetCli.businessId) || currentBusiness;
+    const cfg = getBusinessLoyaltyConfig(biz);
+    const currentPts = Math.max(0, Math.floor(targetCli.loyaltyPoints ?? 0));
+
+    if (currentPts < cfg.rewardThreshold) {
+      return {
+        success: false,
+        error: `Saldo insuficiente. Faltam ${cfg.rewardThreshold - currentPts} ponto(s) para o resgate.`,
+      };
+    }
+
+    const author =
+      authorName ||
+      currentProfessional?.name ||
+      (currentRole === 'gerente' ? 'Gerência' : 'Equipe');
+
+    const { updatedClient } = applyLoyaltyMutation(targetCli, {
+      type: 'redeem',
+      pointsDelta: -cfg.rewardThreshold,
+      description: `Resgate de Prêmio: ${cfg.rewardTitle}`,
+      authorName: author,
+    });
+
+    const nextCycle = Math.max(0, Math.floor(updatedClient.loyaltyRewardsRedeemed ?? 0));
+    const finalClient: Client = {
+      ...updatedClient,
+      loyaltyNotifiedMilestones: {
+        cycle: nextCycle,
+        milestonesSent: [],
+      },
+    };
+
+    setClients((prev) => prev.map((c) => (c.id === clientId ? finalClient : c)));
+    syncClientToFirestore(finalClient).catch(console.warn);
+
+    addNotification({
+      title: 'Prêmio Fidelidade Resgatado',
+      message: `${targetCli.name} resgatou "${cfg.rewardTitle}" (-${cfg.rewardThreshold} pts).`,
+      type: 'system',
+    });
+
+    return { success: true };
+  };
+
+  const adjustClientLoyaltyPoints = (
+    clientId: string,
+    delta: number,
+    reason?: string,
+    authorName?: string
+  ) => {
+    if (!clientId || delta === 0) return;
+    const author =
+      authorName ||
+      currentProfessional?.name ||
+      (currentRole === 'gerente' ? 'Gerência' : 'Equipe');
+
+    let mutatedClient: Client | null = null;
+    let triggeredMilestone: 50 | 90 | null = null;
+
+    setClients((prev) =>
+      prev.map((c) => {
+        if (c.id !== clientId) return c;
+        const biz = businesses.find((b) => b.id === c.businessId) || currentBusiness;
+        const cfg = getBusinessLoyaltyConfig(biz);
+        const prevPts = Math.max(0, Math.floor(c.loyaltyPoints ?? 0));
+
+        const { updatedClient } = applyLoyaltyMutation(c, {
+          type: delta > 0 ? 'earn' : 'adjust',
+          pointsDelta: Math.round(delta),
+          description:
+            reason?.trim() ||
+            (delta > 0 ? 'Carimbo manual adicionado pela equipe' : 'Ajuste manual de pontos'),
+          authorName: author,
+        });
+
+        const nextPts = Math.max(0, Math.floor(updatedClient.loyaltyPoints ?? 0));
+        let finalClient = updatedClient;
+        if (delta > 0 && cfg.enabled && cfg.milestoneNotificationsEnabled !== false) {
+          const cycle = Math.max(0, Math.floor(updatedClient.loyaltyRewardsRedeemed ?? 0));
+          const detection = detectLoyaltyMilestonesCrossed(
+            prevPts,
+            nextPts,
+            cfg.rewardThreshold,
+            cycle,
+            updatedClient.loyaltyNotifiedMilestones
+          );
+          if (detection.milestoneToTrigger) {
+            triggeredMilestone = detection.milestoneToTrigger;
+            finalClient = {
+              ...updatedClient,
+              loyaltyNotifiedMilestones: detection.updatedTracker,
+            };
+          }
+        }
+
+        mutatedClient = finalClient;
+        syncClientToFirestore(finalClient).catch(console.warn);
+        return finalClient;
+      })
+    );
+
+    if (mutatedClient) {
+      const cliObj = mutatedClient as Client;
+      addNotification({
+        title: 'Cartão Fidelidade Atualizado',
+        message: `${cliObj.name}: ${delta > 0 ? `+${delta}` : delta} ponto(s) (${reason?.trim() || 'ajuste manual'}).`,
+        type: 'system',
+      });
+
+      if (triggeredMilestone) {
+        dispatchMilestoneNotificationRecord(cliObj, triggeredMilestone, {
+          isManualOrTest: false,
+        }).catch(console.warn);
+      }
+    }
+  };
+
+  const updateBusinessLoyaltyConfig = (businessId: string, config: LoyaltyConfig) => {
+    const targetBiz = businesses.find((b) => b.id === businessId);
+    if (!targetBiz) return;
+    const channel: LoyaltyNotificationChannel =
+      config.notificationChannels === 'push' ||
+      config.notificationChannels === 'email' ||
+      config.notificationChannels === 'both'
+        ? config.notificationChannels
+        : 'both';
+    const updatedBiz: Business = {
+      ...targetBiz,
+      loyaltyConfig: {
+        enabled: !!config.enabled,
+        pointsPerService: Math.max(1, Math.min(100, Math.round(config.pointsPerService || 1))),
+        rewardThreshold: Math.max(2, Math.min(100, Math.round(config.rewardThreshold || 10))),
+        rewardTitle: (config.rewardTitle || '').trim() || '1 Serviço Grátis à escolha',
+        milestoneNotificationsEnabled: config.milestoneNotificationsEnabled !== false,
+        notificationChannels: channel,
+      },
+    };
+    setBusinesses((prev) => prev.map((b) => (b.id === businessId ? updatedBiz : b)));
+    syncBusinessToFirestore(updatedBiz).catch(console.warn);
+    addNotification({
+      title: 'Cartão Fidelidade Configurado',
+      message: `Regra atualizada: ${updatedBiz.loyaltyConfig!.pointsPerService} pt(s) por serviço · meta ${updatedBiz.loyaltyConfig!.rewardThreshold} pts.`,
+      type: 'system',
+    });
+  };
+
   const createOrUpdateComanda = (comanda: Comanda) => {
     setComandas((prev) => {
       const idx = prev.findIndex((c) => c.id === comanda.id);
@@ -2574,17 +3743,23 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     const closedTime = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
     const closedAt = `${now.toISOString().split('T')[0]} ${closedTime}`;
 
+    const targetComanda = comandas.find((c) => c.id === id);
+    const finalTotal = targetComanda ? Math.max(0, targetComanda.subtotal - discount) : 0;
+
     setComandas((prev) =>
       prev.map((c) => {
         if (c.id === id) {
-          const finalTotal = Math.max(0, c.subtotal - discount);
+          const updatedTotal = Math.max(0, c.subtotal - discount);
+          const proIds = getComandaProfessionalIds(c);
           const updatedCmd: Comanda = {
             ...c,
             discount,
-            total: finalTotal,
+            total: updatedTotal,
             paymentMethod,
             status: 'fechada',
             closedAt,
+            professionalIds: proIds.length > 0 ? proIds : c.professionalIds,
+            professionalName: getComandaProfessionalsLabel(c, professionals),
           };
           syncComandaToFirestore(updatedCmd).catch(console.warn);
           return updatedCmd;
@@ -2593,14 +3768,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
     );
 
-    const targetComanda = comandas.find((c) => c.id === id);
-    if (targetComanda?.appointmentId) {
+    if (targetComanda) {
+      const linkedAppIds = new Set<string>();
+      if (targetComanda.appointmentId) linkedAppIds.add(targetComanda.appointmentId);
+      (targetComanda.appointmentIds || []).forEach((aid) => linkedAppIds.add(aid));
+      (targetComanda.items || []).forEach((it) => {
+        if (it.appointmentId) linkedAppIds.add(it.appointmentId);
+      });
+
       setAppointments((prev) =>
-        prev.map((a) =>
-          a.id === targetComanda.appointmentId
-            ? { ...a, status: 'concluido', paymentStatus: 'pago' }
-            : a
-        )
+        prev.map((a) => {
+          if (linkedAppIds.has(a.id) || a.comandaId === id) {
+            if (a.status === 'cancelado') return a;
+            const updatedApp: Appointment = { ...a, status: 'concluido', paymentStatus: 'pago' };
+            syncAppointmentToFirestore(updatedApp).catch(console.warn);
+            return updatedApp;
+          }
+          return a;
+        })
       );
     }
 
@@ -2620,10 +3805,159 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       })
     );
 
+    // Credita pontos de fidelidade pelos serviços realizados nesta comanda (sem duplicar agendamentos já pontuados)
+    if (targetComanda) {
+      const biz = businesses.find((b) => b.id === targetComanda.businessId) || currentBusiness;
+      const loyaltyCfg = getBusinessLoyaltyConfig(biz);
+
+      if (loyaltyCfg.enabled) {
+        const linkedApp = targetComanda.appointmentId
+          ? appointments.find((a) => a.id === targetComanda.appointmentId)
+          : undefined;
+
+        const matchedCli = findMatchingClientForRecord(clients, targetComanda.businessId, {
+          clientId: linkedApp?.clientId,
+          clientPhone: targetComanda.clientPhone || linkedApp?.clientPhone,
+          clientName: targetComanda.clientName || linkedApp?.clientName,
+        });
+
+        if (matchedCli) {
+          const serviceItems = (targetComanda.items || []).filter((it) => it.type === 'servico');
+          serviceItems.forEach((srvItem) => {
+            const alreadyCredited = hasLoyaltyCreditForReference(matchedCli, {
+              appointmentId: srvItem.appointmentId,
+              comandaId: targetComanda.id,
+              comandaItemId: srvItem.id,
+            });
+            if (!alreadyCredited) {
+              const pts = Math.max(1, (srvItem.quantity || 1) * loyaltyCfg.pointsPerService);
+              awardClientLoyaltyPoints(
+                matchedCli.id,
+                pts,
+                `Serviço realizado: ${srvItem.name}`,
+                {
+                  serviceName: srvItem.name,
+                  appointmentId: srvItem.appointmentId,
+                  comandaId: targetComanda.id,
+                  comandaItemId: srvItem.id,
+                  authorName: srvItem.professionalName || targetComanda.professionalName,
+                }
+              );
+            }
+          });
+        }
+      }
+    }
+
     addNotification({
       title: 'Comanda recebida',
-      message: `Recebimento de R$ ${(targetComanda?.total || 0).toFixed(2)} via ${paymentMethod.toUpperCase()} confirmado.`,
+      message: `Recebimento de R$ ${finalTotal.toFixed(2)} via ${paymentMethod.toUpperCase()} confirmado.`,
       type: 'payment',
+    });
+  };
+
+  const cancelComanda = (id: string, reason?: string) => {
+    const nowIso = new Date().toISOString();
+    const reasonText = reason || 'Cancelada manualmente no caixa';
+    const targetCmd = comandas.find((c) => c.id === id);
+
+    setComandas((prev) =>
+      prev.map((c) => {
+        if (c.id === id) {
+          const updatedCmd: Comanda = {
+            ...c,
+            status: 'cancelada',
+            canceledAt: nowIso,
+            cancelReason: reasonText,
+          };
+          syncComandaToFirestore(updatedCmd).catch(console.warn);
+          return updatedCmd;
+        }
+        return c;
+      })
+    );
+
+    if (targetCmd) {
+      const linkedAppIds = new Set<string>();
+      if (targetCmd.appointmentId) linkedAppIds.add(targetCmd.appointmentId);
+      (targetCmd.appointmentIds || []).forEach((aid) => linkedAppIds.add(aid));
+      (targetCmd.items || []).forEach((it) => {
+        if (it.appointmentId) linkedAppIds.add(it.appointmentId);
+      });
+
+      setAppointments((prev) =>
+        prev.map((a) => {
+          if (
+            (linkedAppIds.has(a.id) || a.comandaId === id) &&
+            a.status !== 'concluido' &&
+            a.status !== 'cancelado'
+          ) {
+            const updatedApp: Appointment = {
+              ...a,
+              status: 'cancelado',
+              notes: a.notes ? `${a.notes} | Comanda cancelada: ${reasonText}` : `Comanda cancelada: ${reasonText}`,
+            };
+            syncAppointmentToFirestore(updatedApp).catch(console.warn);
+            return updatedApp;
+          }
+          return a;
+        })
+      );
+    }
+
+    addNotification({
+      title: 'Comanda Cancelada',
+      message: `A comanda #${id.replace('cmd_', '')} foi cancelada.`,
+      type: 'system',
+    });
+  };
+
+  const reopenComanda = (id: string) => {
+    const targetCmd = comandas.find((c) => c.id === id);
+
+    setComandas((prev) =>
+      prev.map((c) => {
+        if (c.id === id) {
+          const updatedCmd: Comanda = {
+            ...c,
+            status: 'aberta',
+            canceledAt: undefined,
+            cancelReason: undefined,
+          };
+          syncComandaToFirestore(updatedCmd).catch(console.warn);
+          return updatedCmd;
+        }
+        return c;
+      })
+    );
+
+    if (targetCmd) {
+      const linkedAppIds = new Set<string>();
+      if (targetCmd.appointmentId) linkedAppIds.add(targetCmd.appointmentId);
+      (targetCmd.appointmentIds || []).forEach((aid) => linkedAppIds.add(aid));
+      (targetCmd.items || []).forEach((it) => {
+        if (it.appointmentId) linkedAppIds.add(it.appointmentId);
+      });
+
+      setAppointments((prev) =>
+        prev.map((a) => {
+          if ((linkedAppIds.has(a.id) || a.comandaId === id) && a.status === 'cancelado') {
+            const updatedApp: Appointment = {
+              ...a,
+              status: 'agendado',
+            };
+            syncAppointmentToFirestore(updatedApp).catch(console.warn);
+            return updatedApp;
+          }
+          return a;
+        })
+      );
+    }
+
+    addNotification({
+      title: 'Comanda Reaberta',
+      message: `A comanda #${id.replace('cmd_', '')} foi reaberta no caixa.`,
+      type: 'system',
     });
   };
 
@@ -2812,6 +4146,21 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     // Abertura automática de comanda vinculada ao profissional ao iniciar o atendimento
     const newComandaId = `cmd_${Date.now()}`;
+    const queueCommPct = resolveItemCommissionPercentage(
+      {
+        id: 'tmp',
+        name: item.serviceName,
+        type: 'servico',
+        price: item.servicePrice,
+        quantity: 1,
+        serviceId: item.serviceId,
+        professionalId: chosenPro.id,
+      },
+      services,
+      professionals,
+      chosenPro.id
+    );
+
     const newComanda: Comanda = {
       id: newComandaId,
       businessId: currentBusiness?.id || '',
@@ -2820,6 +4169,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       clientPhone: item.clientPhone || '',
       professionalId: chosenPro.id,
       professionalName: chosenPro.name,
+      professionalIds: [chosenPro.id],
       items: [
         {
           id: `item_${Date.now()}`,
@@ -2827,6 +4177,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           type: 'servico',
           price: item.servicePrice,
           quantity: 1,
+          serviceId: item.serviceId,
+          professionalId: chosenPro.id,
+          professionalName: chosenPro.name,
+          commissionPercentage: queueCommPct,
+          commissionValue: (item.servicePrice * queueCommPct) / 100,
         },
       ],
       subtotal: item.servicePrice,
@@ -2873,6 +4228,31 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setQueueItems((prev) => prev.map((q) => (q.id === id ? updated : q)));
     await syncQueueItemToFirestore(updated);
 
+    const biz = businesses.find((b) => b.id === item.businessId) || currentBusiness;
+    const loyaltyCfg = getBusinessLoyaltyConfig(biz);
+    if (loyaltyCfg.enabled) {
+      const matchedCli = findMatchingClientForRecord(clients, item.businessId, {
+        clientId: item.clientId,
+        clientPhone: item.clientPhone,
+        clientName: item.clientName,
+      });
+      if (
+        matchedCli &&
+        !hasLoyaltyCreditForReference(matchedCli, { comandaId: item.comandaId })
+      ) {
+        awardClientLoyaltyPoints(
+          matchedCli.id,
+          loyaltyCfg.pointsPerService,
+          `Serviço realizado (Fila): ${item.serviceName}`,
+          {
+            serviceName: item.serviceName,
+            comandaId: item.comandaId,
+            authorName: item.assignedProfessionalName || item.professionalName || 'Fila Virtual',
+          }
+        );
+      }
+    }
+
     addNotification({
       title: `Atendimento Concluído: Senha ${item.ticketNumber}`,
       message: `${item.clientName} finalizou atendimento. Comanda pronta no Caixa.`,
@@ -2896,6 +4276,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
     setQueueItems((prev) => prev.map((q) => (q.id === id ? updated : q)));
     await syncQueueItemToFirestore(updated);
+
+    if (item.comandaId) {
+      setComandas((prev) =>
+        prev.map((c) => {
+          if (c.id === item.comandaId && c.status === 'aberta') {
+            const updatedCmd: Comanda = {
+              ...c,
+              status: 'cancelada',
+              canceledAt: new Date().toISOString(),
+              cancelReason: `Fila Virtual: senha ${item.ticketNumber} ${reason === 'desistiu' ? 'desistiu' : 'cancelada'}`,
+            };
+            syncComandaToFirestore(updatedCmd).catch(console.warn);
+            return updatedCmd;
+          }
+          return c;
+        })
+      );
+    }
 
     addNotification({
       title: `Senha ${item.ticketNumber} ${reason === 'desistiu' ? 'Desistiu' : 'Cancelada'}`,
@@ -2967,6 +4365,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         logoutFirebase,
 
         businesses,
+        managedBusinesses,
         currentBusiness,
         switchBusiness,
         registerBusiness,
@@ -2974,6 +4373,8 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setTenantStatus,
         changeTenantPlan,
         deleteBusiness,
+        isNewUnitModalOpen,
+        setIsNewUnitModalOpen,
 
         saasPlans,
         addSaasPlan,
@@ -3005,6 +4406,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         appointments,
         activeAppointments,
         addAppointment,
+        addMultiServiceAppointment,
         updateAppointmentStatus,
         updateAppointment,
 
@@ -3016,15 +4418,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         updateClientPreferences,
         updateClientTags,
         toggleClientTag,
+        awardClientLoyaltyPoints,
+        redeemClientLoyaltyReward,
+        adjustClientLoyaltyPoints,
+        updateBusinessLoyaltyConfig,
 
         comandas,
         activeComandas,
         createOrUpdateComanda,
         closeComanda,
+        cancelComanda,
+        reopenComanda,
 
         notifications,
         markNotificationRead,
         addNotification,
+        loyaltyNotifications,
+        activeLoyaltyNotifications,
+        markLoyaltyNotificationRead,
+        sendLoyaltyMilestoneNotification,
 
         searchQuery,
         setSearchQuery,

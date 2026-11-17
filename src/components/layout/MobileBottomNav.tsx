@@ -596,6 +596,19 @@ export const MobileBottomNav: React.FC = () => {
                     <Tv className="w-4 h-4 text-indigo-600 shrink-0" />
                     <span className="text-xs truncate">Fila Virtual & TV</span>
                   </button>
+
+                  {/* Multi-Unidades */}
+                  <button
+                    onClick={() => handleNavClick('unidades')}
+                    className={`min-h-[50px] p-3 rounded-xl border flex items-center gap-2.5 text-left transition-all cursor-pointer ${
+                      activeTab === 'unidades'
+                        ? 'border-slate-900 bg-slate-50 text-slate-900 font-bold'
+                        : 'border-slate-200/80 hover:bg-slate-50 text-slate-700'
+                    }`}
+                  >
+                    <Building2 className="w-4 h-4 text-slate-600 shrink-0" />
+                    <span className="text-xs truncate">Multi-Unidades</span>
+                  </button>
                 </div>
               </div>
 

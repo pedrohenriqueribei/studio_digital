@@ -33,12 +33,26 @@ import {
   Link2,
   FlipHorizontal,
   X,
+  Award,
+  BellRing,
+  Send,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { Appointment, Service, Professional, Business, AppointmentStatus } from '../../types';
 import { formatCurrency } from '../../utils/availability';
 import { maskPhone } from '../../utils/masks';
 import { ServiceSearchAutocomplete } from '../services/ServiceSearchAutocomplete';
+import { ClientLoyaltyPanel } from './ClientLoyaltyPanel';
+import { LoyaltyPointsHistoryView } from '../clients/LoyaltyPointsHistoryView';
+import { getBusinessLoyaltyConfig, getClientLoyaltyStatus } from '../../utils/loyalty';
+import {
+  getBrowserPushPermission,
+  requestBrowserPushPermission,
+  triggerBrowserPushNotification,
+  hasLocalPushDelivered,
+  markLocalPushDelivered,
+  formatChannelLabel,
+} from '../../utils/loyaltyNotifications';
 
 // Helper to compress and center-crop avatar image into a 500x500 square data URL
 const compressAndResizeImage = (fileOrBlob: Blob, maxSize = 500, quality = 0.85): Promise<string> => {
@@ -74,7 +88,7 @@ const compressAndResizeImage = (fileOrBlob: Blob, maxSize = 500, quality = 0.85)
   });
 };
 
-type ClientTab = 'dashboard' | 'agendamentos' | 'novo' | 'historico' | 'perfil' | 'notificacoes';
+type ClientTab = 'dashboard' | 'agendamentos' | 'novo' | 'fidelidade' | 'historico_pontos' | 'historico' | 'perfil' | 'notificacoes';
 
 export const ClientPortal: React.FC = () => {
   const {
@@ -90,11 +104,56 @@ export const ClientPortal: React.FC = () => {
     businesses,
     currentBusiness,
     notifications,
+    loyaltyNotifications,
+    markLoyaltyNotificationRead,
     sendPasswordReset,
     navigateTo,
   } = useApp();
 
   const [activeTab, setActiveTab] = useState<ClientTab>('dashboard');
+  const [pushPermission, setPushPermission] = useState(() => getBrowserPushPermission());
+
+  const myLoyaltyNotifications = useMemo(() => {
+    if (!currentClient) return [];
+    const cliEmail = (currentClient.email || '').trim().toLowerCase();
+    return loyaltyNotifications
+      .filter(
+        (n) =>
+          n.clientId === currentClient.id ||
+          (cliEmail && n.clientEmail?.trim().toLowerCase() === cliEmail && n.businessId === currentClient.businessId)
+      )
+      .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+  }, [loyaltyNotifications, currentClient]);
+
+  const unreadLoyaltyCount = useMemo(
+    () => myLoyaltyNotifications.filter((n) => n.status !== 'lida').length,
+    [myLoyaltyNotifications]
+  );
+
+  // Dispara Web Push nativo do navegador automaticamente quando chega alerta não lido (50% / 90%)
+  useEffect(() => {
+    if (pushPermission !== 'granted') return;
+    const latestUnread = myLoyaltyNotifications.find(
+      (n) =>
+        n.status !== 'lida' &&
+        (n.channel === 'push' || n.channel === 'both') &&
+        !hasLocalPushDelivered(n.id)
+    );
+    if (!latestUnread) return;
+    const fired = triggerBrowserPushNotification(
+      latestUnread.title,
+      latestUnread.message,
+      latestUnread.id,
+      () => {
+        setActiveTab('novo');
+        setBookingStep(1);
+        setBookingSuccess(null);
+      }
+    );
+    if (fired) {
+      markLocalPushDelivered(latestUnread.id);
+    }
+  }, [myLoyaltyNotifications, pushPermission]);
 
   // Modal states
   const [selectedAppointmentForDetails, setSelectedAppointmentForDetails] = useState<Appointment | null>(null);
@@ -789,6 +848,46 @@ export const ClientPortal: React.FC = () => {
           </button>
 
           <button
+            onClick={() => setActiveTab('fidelidade')}
+            className={`px-3 py-1.5 rounded-lg font-semibold transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'fidelidade'
+                ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Award className="w-3.5 h-3.5" />
+            <span>Fidelidade</span>
+            {currentClient && (() => {
+              const clientBiz = businesses.find((b) => b.id === currentClient.businessId) || currentBusiness;
+              const lCfg = getBusinessLoyaltyConfig(clientBiz);
+              if (!lCfg.enabled) return null;
+              const st = getClientLoyaltyStatus(currentClient, lCfg);
+              return (
+                <span className="ml-1 font-mono tabular-nums text-[10px] text-amber-400 font-bold">
+                  {st.points}/{st.threshold}
+                </span>
+              );
+            })()}
+          </button>
+
+          <button
+            onClick={() => setActiveTab('historico_pontos')}
+            className={`px-3 py-1.5 rounded-lg font-semibold transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
+              activeTab === 'historico_pontos'
+                ? 'bg-emerald-500/15 text-emerald-300 border border-emerald-500/30'
+                : 'text-slate-400 hover:text-white'
+            }`}
+          >
+            <Award className="w-3.5 h-3.5 text-amber-400" />
+            <span>Histórico de Pontos</span>
+            {currentClient && (currentClient.loyaltyHistory?.length || 0) > 0 && (
+              <span className="ml-1 font-mono tabular-nums text-[10px] text-slate-300 font-bold">
+                {currentClient.loyaltyHistory!.length}
+              </span>
+            )}
+          </button>
+
+          <button
             onClick={() => setActiveTab('historico')}
             className={`px-3 py-1.5 rounded-lg font-semibold transition-all whitespace-nowrap cursor-pointer flex items-center gap-1.5 ${
               activeTab === 'historico'
@@ -822,9 +921,15 @@ export const ClientPortal: React.FC = () => {
           >
             <Bell className="w-3.5 h-3.5" />
             <span>Notificações</span>
-            {notifications.length > 0 && (
-              <span className="ml-1 px-1.5 py-0.2 rounded-full text-[10px] bg-slate-800 text-slate-300 font-mono">
-                {notifications.length}
+            {unreadLoyaltyCount + notifications.length > 0 && (
+              <span
+                className={`ml-1 px-1.5 py-0.2 rounded-full text-[10px] font-mono font-bold ${
+                  unreadLoyaltyCount > 0
+                    ? 'bg-emerald-500 text-slate-950'
+                    : 'bg-slate-800 text-slate-300'
+                }`}
+              >
+                {unreadLoyaltyCount > 0 ? unreadLoyaltyCount : notifications.length}
               </span>
             )}
           </button>
@@ -921,12 +1026,28 @@ export const ClientPortal: React.FC = () => {
                     <DollarSign className="w-4 h-4" />
                   </div>
                 </div>
-                <div className="text-2xl font-extrabold text-amber-400">
+                <div className="text-2xl font-extrabold text-amber-400 font-mono tabular-nums">
                   {formatCurrency(totalSpent)}
                 </div>
                 <span className="text-[11px] text-slate-500">Histórico de cuidados</span>
               </div>
             </div>
+
+            {/* Client Virtual Loyalty Card with Milestone Progress Bars & Confetti */}
+            {currentClient && (() => {
+              const clientBiz =
+                businesses.find((b) => b.id === currentClient.businessId) || currentBusiness;
+              const lCfg = getBusinessLoyaltyConfig(clientBiz);
+              if (!lCfg.enabled) return null;
+              return (
+                <ClientLoyaltyPanel
+                  client={currentClient}
+                  config={lCfg}
+                  businessName={clientBiz?.tradeName || 'Studio Digital'}
+                  onOpenPointsHistory={() => setActiveTab('historico_pontos')}
+                />
+              );
+            })()}
 
             {/* Pending Reviews Banner */}
             {unratedCompleted.length > 0 && (
@@ -1639,6 +1760,93 @@ export const ClientPortal: React.FC = () => {
         )}
 
         {/* ========================================================= */}
+        {/* TAB: CARTÃO FIDELIDADE & MARCOS                           */}
+        {/* ========================================================= */}
+        {activeTab === 'fidelidade' && (
+          <div className="space-y-6">
+            <div>
+              <h1 className="text-xl font-extrabold text-white">Cartão Fidelidade & Conquistas</h1>
+              <p className="text-xs text-slate-400">
+                Acompanhe seus carimbos, barras de progresso de marcos e prêmios disponíveis.
+              </p>
+            </div>
+
+            {currentClient ? (() => {
+              const clientBiz =
+                businesses.find((b) => b.id === currentClient.businessId) || currentBusiness;
+              const lCfg = getBusinessLoyaltyConfig(clientBiz);
+              if (!lCfg.enabled) {
+                return (
+                  <div className="p-8 bg-slate-900/60 border border-slate-800 rounded-3xl text-center space-y-2">
+                    <Award className="w-10 h-10 text-slate-600 mx-auto" />
+                    <h2 className="text-base font-bold text-white">Programa de Fidelidade Pausado</h2>
+                    <p className="text-xs text-slate-400 max-w-md mx-auto">
+                      No momento este estúdio pausou novas pontuações no Cartão Fidelidade, mas seus pontos anteriores permanecem preservados.
+                    </p>
+                  </div>
+                );
+              }
+              return (
+                <ClientLoyaltyPanel
+                  client={currentClient}
+                  config={lCfg}
+                  businessName={clientBiz?.tradeName || 'Studio Digital'}
+                  onOpenPointsHistory={() => setActiveTab('historico_pontos')}
+                  onQuickBookService={() => {
+                    setActiveTab('novo');
+                    setBookingStep(1);
+                    setBookingSuccess(null);
+                  }}
+                />
+              );
+            })() : null}
+          </div>
+        )}
+
+        {/* ========================================================= */}
+        {/* TAB: HISTÓRICO DETALHADO DE PONTOS                        */}
+        {/* ========================================================= */}
+        {activeTab === 'historico_pontos' && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h1 className="text-xl font-extrabold text-white">Histórico de Pontos</h1>
+                <p className="text-xs text-slate-400">
+                  Consulte datas, horários e os serviços que geraram cada pontuação acumulada ou resgate no seu Cartão Fidelidade.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActiveTab('fidelidade')}
+                className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 rounded-xl text-xs font-bold transition-colors whitespace-nowrap shrink-0 cursor-pointer self-start sm:self-auto"
+              >
+                Ver Cartão Fidelidade
+              </button>
+            </div>
+
+            {currentClient && (() => {
+              const clientBiz =
+                businesses.find((b) => b.id === currentClient.businessId) || currentBusiness;
+              const lCfg = getBusinessLoyaltyConfig(clientBiz);
+              return (
+                <LoyaltyPointsHistoryView
+                  client={currentClient}
+                  appointments={myAppointments}
+                  config={lCfg}
+                  theme="dark"
+                  onEmptyAction={() => {
+                    setActiveTab('novo');
+                    setBookingStep(1);
+                    setBookingSuccess(null);
+                  }}
+                  emptyActionLabel="Agendar Serviço para Pontuar"
+                />
+              );
+            })()}
+          </div>
+        )}
+
+        {/* ========================================================= */}
         {/* TAB 4: HISTÓRICO DE ATENDIMENTOS                         */}
         {/* ========================================================= */}
         {activeTab === 'historico' && (
@@ -2035,23 +2243,171 @@ export const ClientPortal: React.FC = () => {
         )}
 
         {/* ========================================================= */}
-        {/* TAB 6: NOTIFICAÇÕES                                      */}
+        {/* TAB 6: NOTIFICAÇÕES (FIDELIDADE 50%/90% & AGENDAMENTOS)    */}
         {/* ========================================================= */}
         {activeTab === 'notificacoes' && (
           <div className="max-w-2xl mx-auto space-y-6">
-            <div>
-              <h1 className="text-xl font-extrabold text-white">Notificações</h1>
-              <p className="text-xs text-slate-400">
-                Avisos importantes sobre confirmações e cancelamentos de agendamentos.
-              </p>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h1 className="text-xl font-extrabold text-white">Notificações</h1>
+                <p className="text-xs text-slate-400">
+                  Alertas do seu Cartão Fidelidade (50% e 90%), confirmações e lembretes de agendamento.
+                </p>
+              </div>
+              {unreadLoyaltyCount > 0 && (
+                <span className="text-xs font-mono tabular-nums font-bold text-emerald-400 self-start sm:self-auto">
+                  {unreadLoyaltyCount} alerta(s) de fidelidade não lido(s)
+                </span>
+              )}
             </div>
 
-            {notifications.length === 0 ? (
+            {/* Web Push Permission Banner */}
+            <div className="p-4 bg-slate-900 border border-slate-800 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-xl bg-emerald-500/15 text-emerald-400 flex items-center justify-center shrink-0">
+                  <BellRing className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-xs font-bold text-white">
+                    Alertas Push no Navegador (Marcos de 50% e 90%)
+                  </h2>
+                  <p className="text-[11px] text-slate-400 mt-0.5">
+                    {pushPermission === 'granted'
+                      ? 'Ativado! Você receberá notificações Push em tempo real ao alcançar 50% e 90% do seu Cartão Fidelidade.'
+                      : pushPermission === 'denied'
+                      ? 'Permissão de notificações bloqueada nas configurações do navegador. Os alertas continuam disponíveis nesta caixa.'
+                      : pushPermission === 'unsupported'
+                      ? 'Este navegador não suporta Web Push nativo. Você acompanhará todos os alertas por aqui e por e-mail.'
+                      : 'Ative as notificações do navegador para ser avisado(a) assim que atingir 50% ou 90% do seu Cartão Fidelidade.'}
+                  </p>
+                </div>
+              </div>
+
+              {pushPermission === 'default' && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    const result = await requestBrowserPushPermission();
+                    setPushPermission(result);
+                  }}
+                  className="px-4 py-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded-xl transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+                >
+                  Ativar Push Agora
+                </button>
+              )}
+
+              {pushPermission === 'granted' && (
+                <span className="px-3 py-1.5 bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-bold text-[11px] rounded-xl inline-flex items-center gap-1.5 whitespace-nowrap shrink-0">
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Push Ativo</span>
+                </span>
+              )}
+            </div>
+
+            {/* Loyalty Milestone Notifications (50% & 90%) */}
+            {myLoyaltyNotifications.length > 0 && (
+              <div className="space-y-3">
+                <h2 className="text-xs font-mono uppercase tracking-wider text-emerald-400 font-bold">
+                  Alertas do Cartão Fidelidade
+                </h2>
+                {myLoyaltyNotifications.map((ln) => {
+                  const isUnread = ln.status !== 'lida';
+                  return (
+                    <div
+                      key={ln.id}
+                      className={`p-4 sm:p-5 rounded-2xl border space-y-3 transition-colors ${
+                        isUnread
+                          ? 'bg-slate-900 border-emerald-500/40'
+                          : 'bg-slate-900/70 border-slate-800'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-3 min-w-0">
+                          <div
+                            className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 mt-0.5 ${
+                              ln.milestonePercent === 90
+                                ? 'bg-emerald-500/20 text-emerald-400'
+                                : 'bg-amber-500/20 text-amber-400'
+                            }`}
+                          >
+                            <Award className="w-4 h-4" />
+                          </div>
+                          <div className="space-y-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span
+                                className={`px-2 py-0.5 rounded-md text-[10px] font-mono font-bold tabular-nums ${
+                                  ln.milestonePercent === 90
+                                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                                    : 'bg-amber-500/20 text-amber-300 border border-amber-500/30'
+                                }`}
+                              >
+                                Marco {ln.milestonePercent}%
+                              </span>
+                              <span className="text-[10px] font-mono text-slate-400">
+                                Canal: {formatChannelLabel(ln.channel)}
+                              </span>
+                              {isUnread && (
+                                <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block" title="Não lida" />
+                              )}
+                            </div>
+                            <h3 className="text-sm font-bold text-white">{ln.title}</h3>
+                            <p className="text-xs text-slate-300 leading-relaxed">{ln.message}</p>
+                          </div>
+                        </div>
+
+                        <span className="text-[10px] font-mono tabular-nums text-slate-500 shrink-0">
+                          {new Date(ln.createdAt).toLocaleDateString('pt-BR')}
+                        </span>
+                      </div>
+
+                      <div className="pt-2 border-t border-slate-800/80 flex items-center justify-between gap-3 flex-wrap">
+                        <span className="text-[11px] font-mono tabular-nums text-slate-400">
+                          Progresso: {ln.pointsAtDispatch}/{ln.rewardThreshold} pts · Prêmio: {ln.rewardTitle}
+                        </span>
+
+                        <div className="flex items-center gap-2">
+                          {isUnread && (
+                            <button
+                              type="button"
+                              onClick={() => markLoyaltyNotificationRead(ln.id)}
+                              className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold rounded-xl cursor-pointer whitespace-nowrap"
+                            >
+                              Marcar como lida
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              markLoyaltyNotificationRead(ln.id);
+                              setActiveTab('novo');
+                              setBookingStep(1);
+                              setBookingSuccess(null);
+                            }}
+                            className="px-3.5 py-1.5 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-xs rounded-xl inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                          >
+                            <Calendar className="w-3.5 h-3.5" />
+                            <span>Agendar Novo Serviço</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* General System & Appointment Notifications */}
+            {myLoyaltyNotifications.length === 0 && notifications.length === 0 ? (
               <div className="p-8 bg-slate-900/50 rounded-3xl border border-slate-800 text-center text-xs text-slate-500">
                 Nenhuma notificação recente.
               </div>
-            ) : (
+            ) : notifications.length > 0 ? (
               <div className="space-y-3">
+                {myLoyaltyNotifications.length > 0 && (
+                  <h2 className="text-xs font-mono uppercase tracking-wider text-slate-400 font-bold">
+                    Atividades Recentes
+                  </h2>
+                )}
                 {notifications.map((n) => (
                   <div
                     key={n.id}
@@ -2070,7 +2426,7 @@ export const ClientPortal: React.FC = () => {
                   </div>
                 ))}
               </div>
-            )}
+            ) : null}
           </div>
         )}
       </main>

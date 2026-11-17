@@ -35,6 +35,7 @@ import {
   Eye,
   Check,
   Tv,
+  Award,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -58,9 +59,25 @@ import { Appointment, Comanda, Professional, Service, Client } from '../../types
 import { getTodayDateString } from '../../utils/date';
 import { formatCurrency } from '../../utils/availability';
 import { QueueVsAppointmentsReport } from './QueueVsAppointmentsReport';
+import { LoyaltyAnalyticsReport } from './LoyaltyAnalyticsReport';
+import { getBusinessLoyaltyConfig, getClientLoyaltyStatus } from '../../utils/loyalty';
+import {
+  comandaInvolvesProfessional,
+  getComandaEffectiveFactor,
+  getComandaRevenueForProfessional,
+  isAppointmentCoveredByClosedComanda,
+  resolveItemCommissionPercentage,
+} from '../../utils/commissions';
 
 type PeriodOption = 'hoje' | '7d' | '30d' | 'mes' | '90d' | 'ano' | 'customizado';
-type ActiveSubView = 'visao_geral' | 'fila_vs_agendados' | 'profissionais' | 'servicos' | 'receita' | 'horarios_retencao';
+type ActiveSubView =
+  | 'visao_geral'
+  | 'fila_vs_agendados'
+  | 'profissionais'
+  | 'servicos'
+  | 'receita'
+  | 'horarios_retencao'
+  | 'fidelidade';
 
 export interface ProfessionalMetricItem {
   id: string;
@@ -119,6 +136,14 @@ export const ReportsManager: React.FC = () => {
   const [activeSubView, setActiveSubView] = useState<ActiveSubView>('visao_geral');
   const [useSimulatedFallback, setUseSimulatedFallback] = useState<boolean>(false);
   const [exportNotice, setExportNotice] = useState<string | null>(null);
+
+  const loyaltyParticipatingCount = useMemo(() => {
+    const cfg = getBusinessLoyaltyConfig(currentBusiness);
+    return activeClients.filter((c) => {
+      const st = getClientLoyaltyStatus(c, cfg);
+      return st.totalEarned > 0 || st.points > 0 || st.rewardsRedeemed > 0;
+    }).length;
+  }, [activeClients, currentBusiness]);
 
   // Calcula limites de data com base no período selecionado
   const { startDate, endDate, dateRangeLabel, dayCount } = useMemo(() => {
@@ -211,15 +236,30 @@ export const ReportsManager: React.FC = () => {
     });
   }, [activeAppointments, startDate, endDate, selectedProId, selectedCategory, selectedStatus, activeServices]);
 
-  // 2. Filtragem Real de Comandas
+  // 2. Filtragem Real de Comandas (incluindo comandas unificadas multi-profissional)
   const filteredComandas = useMemo(() => {
     return activeComandas.filter((c) => {
       const dateStr = (c.closedAt || c.createdAt || '').slice(0, 10);
       if (dateStr && (dateStr < startDate || dateStr > endDate)) return false;
-      if (selectedProId !== 'all' && c.professionalId !== selectedProId) return false;
+      if (selectedProId !== 'all' && !comandaInvolvesProfessional(c, selectedProId)) return false;
       return true;
     });
   }, [activeComandas, startDate, endDate, selectedProId]);
+
+  const getScopedComandaAmount = React.useCallback(
+    (cmd: Comanda) => {
+      if (selectedProId !== 'all') {
+        return getComandaRevenueForProfessional(
+          cmd,
+          selectedProId,
+          activeServices,
+          activeProfessionals
+        ).revenue;
+      }
+      return cmd.total || 0;
+    },
+    [selectedProId, activeServices, activeProfessionals]
+  );
 
   const hasRealData = filteredAppointments.length > 0 || filteredComandas.length > 0;
 
@@ -348,11 +388,12 @@ export const ReportsManager: React.FC = () => {
       };
     }
 
-    // Cálculo com dados reais
+    // Cálculo com dados reais (comandas fechadas com rateio multi-pro + agendamentos descobertos)
     const map = new Map<string, ProfessionalMetricItem>();
 
-    // Inicializa todos os profissionais ativos
+    // Inicializa todos os profissionais ativos (ou apenas o selecionado no filtro)
     activeProfessionals.forEach((pro) => {
+      if (selectedProId !== 'all' && pro.id !== selectedProId) return;
       const dailyHours = pro.workHours
         ? (() => {
             const [sh, sm] = (pro.workHours.start || '09:00').split(':').map(Number);
@@ -383,14 +424,15 @@ export const ReportsManager: React.FC = () => {
       });
     });
 
-    // Acumula os agendamentos filtrados
-    filteredAppointments.forEach((a) => {
-      let entry = map.get(a.professionalId);
+    const ensureEntry = (proId: string, fallbackName?: string) => {
+      let entry = map.get(proId);
       if (!entry) {
+        const pro = activeProfessionals.find((p) => p.id === proId);
         entry = {
-          id: a.professionalId,
-          name: a.professionalName || 'Profissional',
-          role: 'Profissional',
+          id: proId,
+          name: pro?.name || fallbackName || 'Profissional',
+          role: pro?.role || 'Profissional',
+          avatar: pro?.avatar,
           appointmentsCount: 0,
           completedCount: 0,
           cancelledCount: 0,
@@ -401,10 +443,48 @@ export const ReportsManager: React.FC = () => {
           commission: 0,
           studioNet: 0,
           ticketMedio: 0,
-          commissionRate: 40,
+          commissionRate: pro?.commissionPercentage || 40,
         };
-        map.set(a.professionalId, entry);
+        map.set(proId, entry);
       }
+      return entry;
+    };
+
+    const closedComandas = filteredComandas.filter((c) => c.status === 'fechada');
+    const useComandaLedger =
+      selectedCategory === 'all' &&
+      (selectedStatus === 'all' || selectedStatus === 'concluido') &&
+      closedComandas.length > 0;
+
+    if (useComandaLedger) {
+      closedComandas.forEach((cmd) => {
+        const candidatePros = new Set<string>();
+        if (cmd.professionalId) candidatePros.add(cmd.professionalId);
+        cmd.professionalIds?.forEach((id) => candidatePros.add(id));
+        cmd.items?.forEach((it) => {
+          if (it.professionalId) candidatePros.add(it.professionalId);
+        });
+
+        candidatePros.forEach((proId) => {
+          if (selectedProId !== 'all' && proId !== selectedProId) return;
+          const share = getComandaRevenueForProfessional(
+            cmd,
+            proId,
+            activeServices,
+            activeProfessionals
+          );
+          if (share.hasParticipation) {
+            const entry = ensureEntry(proId, cmd.professionalName);
+            entry.revenue += share.revenue;
+            entry.commission += share.commission;
+          }
+        });
+      });
+    }
+
+    // Acumula os agendamentos filtrados (volume, horas e receita/comissão de itens não cobertos por comanda fechada)
+    filteredAppointments.forEach((a) => {
+      const entry = ensureEntry(a.professionalId, a.professionalName);
 
       entry.appointmentsCount += 1;
       if (a.status === 'concluido' || a.paymentStatus === 'pago') {
@@ -415,34 +495,48 @@ export const ReportsManager: React.FC = () => {
 
       if (a.status !== 'cancelado') {
         entry.hoursBooked += (a.durationMinutes || 45) / 60;
-        entry.revenue += a.price || 0;
-        const comm = Math.round(((a.price || 0) * entry.commissionRate) / 100);
-        entry.commission += comm;
+        const isCovered =
+          useComandaLedger && isAppointmentCoveredByClosedComanda(a, closedComandas);
+        if (!isCovered) {
+          const srv = activeServices.find((s) => s.id === a.serviceId);
+          const pct = srv?.commissionPercentage ?? entry.commissionRate ?? 40;
+          const price = a.price || 0;
+          entry.revenue += price;
+          entry.commission += (price * pct) / 100;
+        }
       }
     });
 
-    // Finaliza médias e ocupação
-    const ranking = Array.from(map.values()).map((p) => {
-      const hours = Math.round(p.hoursBooked * 10) / 10;
-      const occ = p.totalHoursAvailable > 0
-        ? Math.min(100, Math.round((hours / p.totalHoursAvailable) * 100))
-        : 0;
-      const tm = p.appointmentsCount > 0 ? Math.round(p.revenue / p.appointmentsCount) : 0;
-      const net = Math.max(0, p.revenue - p.commission);
+    // Finaliza médias, comissão efetiva e ocupação
+    const ranking = Array.from(map.values())
+      .map((p) => {
+        const hours = Math.round(p.hoursBooked * 10) / 10;
+        const occ =
+          p.totalHoursAvailable > 0
+            ? Math.min(100, Math.round((hours / p.totalHoursAvailable) * 100))
+            : 0;
+        const tm = p.appointmentsCount > 0 ? Math.round(p.revenue / p.appointmentsCount) : 0;
+        const commissionRounded = Math.round(p.commission * 100) / 100;
+        const net = Math.max(0, p.revenue - commissionRounded);
+        const effectiveRate =
+          p.revenue > 0 ? Math.round((commissionRounded / p.revenue) * 100) : p.commissionRate;
 
-      return {
-        ...p,
-        hoursBooked: hours,
-        occupancyRate: occ,
-        ticketMedio: tm,
-        studioNet: net,
-      };
-    }).sort((a, b) => b.appointmentsCount - a.appointmentsCount);
+        return {
+          ...p,
+          hoursBooked: hours,
+          occupancyRate: occ,
+          ticketMedio: tm,
+          commission: commissionRounded,
+          studioNet: net,
+          commissionRate: effectiveRate,
+        };
+      })
+      .sort((a, b) => b.appointmentsCount - a.appointmentsCount || b.revenue - a.revenue);
 
     const totalAppointments = ranking.reduce((acc, p) => acc + p.appointmentsCount, 0);
     const totalRevenue = ranking.reduce((acc, p) => acc + p.revenue, 0);
     const totalCommission = ranking.reduce((acc, p) => acc + p.commission, 0);
-    const totalStudioNet = totalRevenue - totalCommission;
+    const totalStudioNet = Math.max(0, totalRevenue - totalCommission);
 
     return {
       ranking,
@@ -452,7 +546,17 @@ export const ReportsManager: React.FC = () => {
       totalStudioNet,
       topPerformer: ranking[0] || null,
     };
-  }, [simulatedData, activeProfessionals, filteredAppointments, dayCount]);
+  }, [
+    simulatedData,
+    activeProfessionals,
+    activeServices,
+    filteredAppointments,
+    filteredComandas,
+    selectedProId,
+    selectedCategory,
+    selectedStatus,
+    dayCount,
+  ]);
 
   // =========================================================================
   // 2. CÁLCULO DOS SERVIÇOS MAIS PROCURADOS
@@ -486,7 +590,7 @@ export const ReportsManager: React.FC = () => {
       };
     }
 
-    // Dados Reais
+    // Dados Reais (reconciliando itens das comandas fechadas + agendamentos descobertos e comissões reais)
     const map = new Map<string, ServiceMetricItem>();
 
     // Inicializa todos os serviços ativos
@@ -504,15 +608,70 @@ export const ReportsManager: React.FC = () => {
       });
     });
 
+    const closedComandas = filteredComandas.filter((c) => c.status === 'fechada');
+    const useComandaLedger =
+      selectedCategory === 'all' &&
+      (selectedStatus === 'all' || selectedStatus === 'concluido') &&
+      closedComandas.length > 0;
+
+    if (useComandaLedger) {
+      closedComandas.forEach((cmd) => {
+        const factor = getComandaEffectiveFactor(cmd);
+        (cmd.items || []).forEach((it) => {
+          if (it.type !== 'servico') return;
+          if (selectedProId !== 'all' && (it.professionalId || cmd.professionalId) !== selectedProId) {
+            return;
+          }
+          const matchedSrv =
+            (it.serviceId ? activeServices.find((s) => s.id === it.serviceId) : undefined) ||
+            activeServices.find((s) => s.name.trim().toLowerCase() === it.name.trim().toLowerCase());
+          const srvId = it.serviceId || matchedSrv?.id;
+          if (!srvId) return;
+
+          let srv = map.get(srvId);
+          if (!srv) {
+            srv = {
+              id: srvId,
+              name: matchedSrv?.name || it.name || 'Serviço',
+              category: matchedSrv?.category || 'Geral',
+              price: matchedSrv?.price || it.price || 0,
+              durationMinutes: matchedSrv?.durationMinutes || 45,
+              appointmentsCount: 0,
+              revenue: 0,
+              commission: 0,
+              ticketMedio: it.price || 0,
+            };
+            map.set(srvId, srv);
+          }
+
+          if (!it.appointmentId) {
+            srv.appointmentsCount += it.quantity || 1;
+          }
+          const netVal = (it.price || 0) * (it.quantity || 1) * factor;
+          const pct = resolveItemCommissionPercentage(
+            it,
+            activeServices,
+            activeProfessionals,
+            cmd.professionalId
+          );
+          srv.revenue += netVal;
+          srv.commission += (netVal * pct) / 100;
+        });
+      });
+    }
+
     // Contabiliza cada agendamento
     filteredAppointments.forEach((a) => {
       if (a.status === 'cancelado') return;
+      const catalogSrv = activeServices.find((s) => s.id === a.serviceId);
+      const pro = activeProfessionals.find((p) => p.id === a.professionalId);
+
       let srv = map.get(a.serviceId);
       if (!srv) {
         srv = {
           id: a.serviceId,
           name: a.serviceName || 'Serviço',
-          category: 'Geral',
+          category: catalogSrv?.category || 'Geral',
           price: a.price || 0,
           durationMinutes: a.durationMinutes || 45,
           appointmentsCount: 0,
@@ -522,15 +681,20 @@ export const ReportsManager: React.FC = () => {
         };
         map.set(a.serviceId, srv);
       }
+
       srv.appointmentsCount += 1;
-      srv.revenue += a.price || 0;
-      const commRate = 40;
-      srv.commission += Math.round(((a.price || 0) * commRate) / 100);
+      const isCovered = useComandaLedger && isAppointmentCoveredByClosedComanda(a, closedComandas);
+      if (!isCovered) {
+        const price = a.price || 0;
+        const commRate = catalogSrv?.commissionPercentage ?? pro?.commissionPercentage ?? 40;
+        srv.revenue += price;
+        srv.commission += (price * commRate) / 100;
+      }
     });
 
     const ranking = Array.from(map.values())
       .filter((s) => s.appointmentsCount > 0 || activeServices.some((as) => as.id === s.id))
-      .sort((a, b) => b.appointmentsCount - a.appointmentsCount);
+      .sort((a, b) => b.appointmentsCount - a.appointmentsCount || b.revenue - a.revenue);
 
     const totalServicesSold = ranking.reduce((acc, s) => acc + s.appointmentsCount, 0);
     const totalServicesRevenue = ranking.reduce((acc, s) => acc + s.revenue, 0);
@@ -556,7 +720,16 @@ export const ReportsManager: React.FC = () => {
       categoriesRanking,
       topService: ranking[0] || null,
     };
-  }, [simulatedData, activeServices, filteredAppointments]);
+  }, [
+    simulatedData,
+    activeServices,
+    activeProfessionals,
+    filteredAppointments,
+    filteredComandas,
+    selectedProId,
+    selectedCategory,
+    selectedStatus,
+  ]);
 
   // =========================================================================
   // 3. CÁLCULO DE RECEITA TOTAL, FORMAS DE PAGAMENTO & CAIXA
@@ -590,18 +763,34 @@ export const ReportsManager: React.FC = () => {
       };
     }
 
-    // Dados Reais
+    // Dados Reais (rateio multi-pro nas comandas fechadas + agendamentos descobertos)
     const closedComandas = filteredComandas.filter((c) => c.status === 'fechada');
-    const comandaRevenue = closedComandas.reduce((acc, c) => acc + (c.total || 0), 0);
+    const useComandaLedger =
+      selectedCategory === 'all' &&
+      (selectedStatus === 'all' || selectedStatus === 'concluido') &&
+      closedComandas.length > 0;
+
+    const comandaRevenue = useComandaLedger
+      ? closedComandas.reduce((acc, c) => acc + getScopedComandaAmount(c), 0)
+      : 0;
 
     const nonCancelledApps = filteredAppointments.filter((a) => a.status !== 'cancelado');
-    const scheduledRevenue = nonCancelledApps.reduce((acc, a) => acc + (a.price || 0), 0);
-    const realizedAppsRevenue = filteredAppointments
-      .filter((a) => a.status === 'concluido' || a.paymentStatus === 'pago')
-      .reduce((acc, a) => acc + (a.price || 0), 0);
 
-    const totalGrossRevenue = comandaRevenue > 0 ? comandaRevenue : scheduledRevenue;
-    const totalRealizedRevenue = comandaRevenue > 0 ? comandaRevenue : realizedAppsRevenue;
+    let uncoveredScheduledRevenue = 0;
+    let uncoveredRealizedRevenue = 0;
+
+    nonCancelledApps.forEach((a) => {
+      if (useComandaLedger && isAppointmentCoveredByClosedComanda(a, closedComandas)) {
+        return;
+      }
+      uncoveredScheduledRevenue += a.price || 0;
+      if (a.status === 'concluido' || a.paymentStatus === 'pago') {
+        uncoveredRealizedRevenue += a.price || 0;
+      }
+    });
+
+    const totalGrossRevenue = comandaRevenue + uncoveredScheduledRevenue;
+    const totalRealizedRevenue = comandaRevenue + uncoveredRealizedRevenue;
     const pendingRevenue = Math.max(0, totalGrossRevenue - totalRealizedRevenue);
     const totalVolume = nonCancelledApps.length || filteredComandas.length;
     const overallTicketMedio = totalVolume > 0 ? totalGrossRevenue / totalVolume : 0;
@@ -618,19 +807,19 @@ export const ReportsManager: React.FC = () => {
       dinheiro: 0,
     };
 
-    filteredComandas.forEach((c) => {
-      if (c.status === 'fechada' && c.paymentMethod) {
-        counts[c.paymentMethod] = (counts[c.paymentMethod] || 0) + (c.total || 0);
+    closedComandas.forEach((c) => {
+      if (c.paymentMethod) {
+        counts[c.paymentMethod] = (counts[c.paymentMethod] || 0) + getScopedComandaAmount(c);
       }
     });
 
-    const hasComandaPayments = Object.values(counts).some((v) => v > 0);
-    const paymentMethods = hasComandaPayments
+    const totalPaidMethods = Object.values(counts).reduce((a, b) => a + b, 0);
+    const paymentMethods = totalPaidMethods > 0
       ? [
-          { name: 'PIX Instantâneo', value: Math.round(((counts.pix || 0) / (totalGrossRevenue || 1)) * 100), amount: counts.pix || 0, color: '#10b981' },
-          { name: 'Cartão de Crédito', value: Math.round(((counts.cartao_credito || 0) / (totalGrossRevenue || 1)) * 100), amount: counts.cartao_credito || 0, color: '#3b82f6' },
-          { name: 'Cartão de Débito', value: Math.round(((counts.cartao_debito || 0) / (totalGrossRevenue || 1)) * 100), amount: counts.cartao_debito || 0, color: '#8b5cf6' },
-          { name: 'Dinheiro em Espécie', value: Math.round(((counts.dinheiro || 0) / (totalGrossRevenue || 1)) * 100), amount: counts.dinheiro || 0, color: '#f59e0b' },
+          { name: 'PIX Instantâneo', value: Math.round(((counts.pix || 0) / totalPaidMethods) * 100), amount: counts.pix || 0, color: '#10b981' },
+          { name: 'Cartão de Crédito', value: Math.round(((counts.cartao_credito || 0) / totalPaidMethods) * 100), amount: counts.cartao_credito || 0, color: '#3b82f6' },
+          { name: 'Cartão de Débito', value: Math.round(((counts.cartao_debito || 0) / totalPaidMethods) * 100), amount: counts.cartao_debito || 0, color: '#8b5cf6' },
+          { name: 'Dinheiro em Espécie', value: Math.round(((counts.dinheiro || 0) / totalPaidMethods) * 100), amount: counts.dinheiro || 0, color: '#f59e0b' },
         ].filter((item) => item.amount > 0 || item.value > 0)
       : [];
 
@@ -646,26 +835,36 @@ export const ReportsManager: React.FC = () => {
       curr.setDate(curr.getDate() + 1);
     }
 
-    filteredComandas.forEach((c) => {
-      const d = (c.closedAt || c.createdAt || '').slice(0, 10);
-      if (d && map.has(d)) {
-        const item = map.get(d)!;
-        item.faturamento += c.total || 0;
-        if (c.status === 'fechada') item.faturamentoRealizado += c.total || 0;
-        item.volume += 1;
-      }
-    });
-
-    if (filteredComandas.length === 0) {
-      filteredAppointments.forEach((a) => {
-        if (a.date && map.has(a.date) && a.status !== 'cancelado') {
-          const item = map.get(a.date)!;
-          item.faturamento += a.price || 0;
-          if (a.status === 'concluido' || a.paymentStatus === 'pago') item.faturamentoRealizado += a.price || 0;
+    if (selectedCategory === 'all') {
+      filteredComandas.forEach((c) => {
+        if (c.status === 'cancelada') return;
+        const d = (c.closedAt || c.createdAt || '').slice(0, 10);
+        if (d && map.has(d)) {
+          const item = map.get(d)!;
+          const val = getScopedComandaAmount(c);
+          item.faturamento += val;
+          if (c.status === 'fechada') item.faturamentoRealizado += val;
           item.volume += 1;
         }
       });
     }
+
+    filteredAppointments.forEach((a) => {
+      if (a.date && map.has(a.date) && a.status !== 'cancelado') {
+        if (
+          selectedCategory === 'all' &&
+          filteredComandas.length > 0 &&
+          (isAppointmentCoveredByClosedComanda(a, closedComandas) ||
+            (a.comandaId && filteredComandas.some((c) => c.id === a.comandaId && c.status !== 'cancelada')))
+        ) {
+          return;
+        }
+        const item = map.get(a.date)!;
+        item.faturamento += a.price || 0;
+        if (a.status === 'concluido' || a.paymentStatus === 'pago') item.faturamentoRealizado += a.price || 0;
+        item.volume += 1;
+      }
+    });
 
     const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
     const timeline = Array.from(map.entries()).map(([date, val]) => {
@@ -692,7 +891,17 @@ export const ReportsManager: React.FC = () => {
       paymentMethods,
       timeline,
     };
-  }, [simulatedData, filteredComandas, filteredAppointments, professionalMetrics.totalCommission, startDate, endDate]);
+  }, [
+    simulatedData,
+    filteredComandas,
+    filteredAppointments,
+    professionalMetrics.totalCommission,
+    startDate,
+    endDate,
+    selectedCategory,
+    selectedStatus,
+    getScopedComandaAmount,
+  ]);
 
   // =========================================================================
   // 4. HORÁRIOS DE PICO & RETENÇÃO DE CLIENTES
@@ -1198,6 +1407,12 @@ export const ReportsManager: React.FC = () => {
           { id: 'servicos', label: 'Serviços Mais Procurados', icon: Scissors, badge: servicesMetrics.ranking.length },
           { id: 'receita', label: 'Receita & Comissões', icon: DollarSign },
           { id: 'horarios_retencao', label: 'Horários de Pico & Retenção', icon: Clock },
+          {
+            id: 'fidelidade',
+            label: 'Cartão Fidelidade & Retorno',
+            icon: Award,
+            badge: loyaltyParticipatingCount > 0 ? loyaltyParticipatingCount : undefined,
+          },
         ].map((tab) => {
           const Icon = tab.icon;
           const isActive = activeSubView === tab.id;
@@ -2082,8 +2297,44 @@ export const ReportsManager: React.FC = () => {
                 style={{ width: `${timeAndRetentionMetrics.retentionRate}%` }}
               />
             </div>
+
+            <div className="mt-4 pt-4 border-t border-slate-100 flex items-center justify-between gap-3">
+              <span className="text-xs text-slate-500">
+                Quer analisar pontos acumulados, resgates de benefícios e ciclo de retorno por cliente?
+              </span>
+              <button
+                type="button"
+                onClick={() => setActiveSubView('fidelidade')}
+                className="px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-colors whitespace-nowrap shrink-0 cursor-pointer flex items-center gap-1.5"
+              >
+                <Award className="w-3.5 h-3.5 text-amber-400" />
+                <span>Abrir Painel Fidelidade</span>
+              </button>
+            </div>
           </div>
         </div>
+      )}
+
+      {/* ===================================================================== */}
+      {/* ABA 6: CARTÃO FIDELIDADE & ANÁLISE DE RETORNO DE CLIENTES             */}
+      {/* ===================================================================== */}
+      {activeSubView === 'fidelidade' && (
+        <LoyaltyAnalyticsReport
+          clients={activeClients}
+          appointments={activeAppointments}
+          comandas={activeComandas}
+          professionals={activeProfessionals}
+          business={currentBusiness}
+          startDate={startDate}
+          endDate={endDate}
+          dateRangeLabel={dateRangeLabel}
+          selectedProId={selectedProId}
+          onNavigateToClients={() => setActiveTab('clientes')}
+          onExportSuccess={(msg) => {
+            setExportNotice(msg);
+            setTimeout(() => setExportNotice(null), 4000);
+          }}
+        />
       )}
     </div>
   );

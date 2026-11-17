@@ -10,7 +10,8 @@ export type AppTab =
   | 'clientes'
   | 'relatorios'
   | 'planos'
-  | 'configuracoes';
+  | 'configuracoes'
+  | 'unidades';
 
 export type UserRole = 'superadmin' | 'ceo' | 'gerente' | 'profissional' | 'super_admin' | 'tenant_manager' | 'client';
 
@@ -56,11 +57,29 @@ export interface Business {
   managerName?: string;
   managerEmail?: string;
   managerPassword?: string;
+  // Suporte a Multi-Unidades & Rede de Estabelecimentos
+  ownerEmail?: string;
+  ownerName?: string;
+  isHeadquarters?: boolean;
+  unitCode?: string;
+  parentId?: string;
   address?: string;
   neighborhood?: string;
   zipCode?: string;
   latitude?: number;
   longitude?: number;
+  loyaltyConfig?: LoyaltyConfig;
+}
+
+export type LoyaltyNotificationChannel = 'both' | 'push' | 'email';
+
+export interface LoyaltyConfig {
+  enabled: boolean;
+  pointsPerService: number;
+  rewardThreshold: number;
+  rewardTitle: string;
+  milestoneNotificationsEnabled?: boolean;
+  notificationChannels?: LoyaltyNotificationChannel;
 }
 
 export interface PlatformAdminUser {
@@ -173,6 +192,11 @@ export interface Appointment {
   rating?: number; // 1 to 5
   reviewComment?: string;
   reviewedAt?: string;
+  // Campos para agendamento multi-serviço em sequência contínua
+  bookingGroupId?: string;
+  groupServiceIndex?: number;
+  groupTotalServices?: number;
+  comandaId?: string;
 }
 
 export interface Review {
@@ -244,6 +268,56 @@ export interface Client {
   zipCode?: string;
   latitude?: number;
   longitude?: number;
+  loyaltyPoints?: number;
+  loyaltyTotalEarned?: number;
+  loyaltyRewardsRedeemed?: number;
+  loyaltyHistory?: LoyaltyTransaction[];
+  loyaltyNotifiedMilestones?: {
+    cycle: number;
+    milestonesSent: number[];
+    lastNotifiedAt?: string;
+  };
+}
+
+export interface LoyaltyTransaction {
+  id: string;
+  type: 'earn' | 'redeem' | 'adjust';
+  points: number;
+  description: string;
+  serviceName?: string;
+  appointmentId?: string;
+  comandaId?: string;
+  comandaItemId?: string;
+  createdAt: string;
+  authorName?: string;
+}
+
+export interface LoyaltyMilestoneNotification {
+  id: string;
+  businessId: string;
+  tenant_id?: string;
+  clientId: string;
+  clientName: string;
+  clientEmail?: string;
+  clientPhone?: string;
+  milestonePercent: 50 | 90;
+  cycle: number;
+  pointsAtDispatch: number;
+  rewardThreshold: number;
+  rewardTitle: string;
+  channel: LoyaltyNotificationChannel;
+  title: string;
+  message: string;
+  emailSubject: string;
+  emailBody: string;
+  pushStatus: 'enviado' | 'nao_aplicavel';
+  emailStatus: 'enviado' | 'configurar_smtp' | 'sem_email' | 'erro_envio' | 'nao_aplicavel';
+  emailStatusDetail?: string;
+  status: 'enviado' | 'lida';
+  ctaAction: 'agendar';
+  isManualOrTest?: boolean;
+  createdAt: string;
+  readAt?: string;
 }
 
 export interface ClientRegistrationData {
@@ -265,25 +339,39 @@ export interface ComandaItem {
   type: 'servico' | 'produto';
   price: number;
   quantity: number;
+  // Atribuição explícita de profissional e comissão por item
+  serviceId?: string;
+  professionalId?: string;
+  professionalName?: string;
+  commissionPercentage?: number;
+  commissionValue?: number;
+  appointmentId?: string;
 }
+
+export type ComandaStatus = 'aberta' | 'fechada' | 'cancelada';
 
 export interface Comanda {
   id: string;
   businessId: string;
   tenant_id?: string;
   appointmentId?: string;
+  appointmentIds?: string[];
+  bookingGroupId?: string;
   clientName: string;
   clientPhone: string;
   professionalId: string;
   professionalName: string;
+  professionalIds?: string[];
   items: ComandaItem[];
   subtotal: number;
   discount: number;
   total: number;
   paymentMethod?: 'pix' | 'cartao_credito' | 'cartao_debito' | 'dinheiro';
-  status: 'aberta' | 'fechada';
+  status: ComandaStatus;
   createdAt: string;
   closedAt?: string;
+  canceledAt?: string;
+  cancelReason?: string;
 }
 
 export interface NotificationItem {

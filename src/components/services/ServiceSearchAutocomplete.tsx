@@ -811,7 +811,10 @@ export const ServiceSearchAutocomplete: React.FC<ServiceSearchAutocompleteProps>
                   {currentSelectedService.category}
                 </span>
               </div>
-              <h3 className="text-base font-extrabold text-white">
+              <h3
+                className="text-base font-extrabold"
+                style={{ color: '#184a18' }}
+              >
                 {currentSelectedService.name}
               </h3>
               <p className="text-xs text-slate-300 flex items-center gap-2 mt-0.5">

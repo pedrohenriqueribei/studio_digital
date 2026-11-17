@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import {
   Users,
   Plus,
@@ -44,6 +44,18 @@ export const ProfessionalsManager: React.FC = () => {
   const [copiedProId, setCopiedProId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingPro, setEditingPro] = useState<Professional | null>(null);
+
+  const nameInputRef = useRef<HTMLInputElement>(null);
+
+  // Auto-foco imediato no campo Nome ao abrir a modal
+  useEffect(() => {
+    if (isModalOpen) {
+      const timer = setTimeout(() => {
+        nameInputRef.current?.focus();
+      }, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [isModalOpen]);
 
   const [showPassword, setShowPassword] = useState(false);
   const [formData, setFormData] = useState({
@@ -171,22 +183,27 @@ export const ProfessionalsManager: React.FC = () => {
   return (
     <div className="space-y-4">
       {/* Top Banner */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-xl border border-slate-200 shadow-2xs">
-        <div>
-          <h2 className="text-base font-bold text-slate-900">
-            Equipe & Gestão de Profissionais
-          </h2>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Controle de escalas, comissionamento e permissões de acesso (CEO, Gerente e Profissional)
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white px-5 py-4 sm:px-6 sm:py-4.5 rounded-2xl border border-slate-200/80 shadow-xs">
+        <div className="space-y-1">
+          <div className="flex items-center gap-2.5">
+            <h2 className="text-sm sm:text-base font-semibold tracking-tight text-slate-900">
+              Equipe & Gestão de Profissionais
+            </h2>
+            <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-medium bg-slate-100 text-slate-600 border border-slate-200/60 font-mono">
+              {activeProfessionals.length} {activeProfessionals.length === 1 ? 'membro' : 'membros'}
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 font-normal">
+            Controle de escalas, comissionamento e permissões de acesso ao sistema
           </p>
         </div>
 
         {currentRole !== 'profissional' && (
           <button
             onClick={openAddModal}
-            className="flex items-center gap-2 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold shadow-xs transition-colors cursor-pointer self-start sm:self-auto"
+            className="inline-flex items-center justify-center gap-2 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-medium shadow-xs transition-all active:scale-[0.98] cursor-pointer self-start sm:self-auto"
           >
-            <Plus className="w-4 h-4" />
+            <Plus className="w-3.5 h-3.5 text-slate-300" />
             <span>Cadastrar Profissional</span>
           </button>
         )}
@@ -374,17 +391,23 @@ export const ProfessionalsManager: React.FC = () => {
 
       {/* Add / Edit Professional Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-lg max-h-[92vh] flex flex-col my-auto overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 bg-slate-50/80 shrink-0 sticky top-0 z-10 bg-white/95 backdrop-blur-xs">
-              <h3 className="text-base font-bold text-slate-900">
-                {editingPro ? 'Editar Profissional' : 'Cadastrar Membro da Equipe'}
-              </h3>
+        <div className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 z-50 overflow-y-auto">
+          <div className="bg-white rounded-3xl shadow-lg border border-slate-200/80 w-full max-w-lg max-h-[92vh] flex flex-col my-auto overflow-hidden animate-in fade-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between px-6 py-4.5 border-b border-slate-100 bg-white/95 backdrop-blur-xs shrink-0 sticky top-0 z-10">
+              <div className="space-y-0.5">
+                <h3 className="text-sm font-semibold text-slate-900 tracking-tight">
+                  {editingPro ? 'Editar Profissional' : 'Cadastrar Membro da Equipe'}
+                </h3>
+                <p className="text-[11px] text-slate-500 font-normal">
+                  {editingPro ? 'Atualize os dados e acessos do profissional' : 'Preencha os dados cadastrais e permissões de acesso'}
+                </p>
+              </div>
               <button
                 onClick={() => setIsModalOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg cursor-pointer"
+                className="p-1.5 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-xl transition-colors cursor-pointer"
+                title="Fechar"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
@@ -393,16 +416,18 @@ export const ProfessionalsManager: React.FC = () => {
               className="professionals-modal-form-container p-6 pb-8 space-y-4 overflow-y-auto flex-1 overscroll-contain [overscroll-behavior:contain]"
             >
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                <label className="text-xs font-medium text-slate-600 block mb-1.5">
                   Nome Completo
                 </label>
                 <input
+                  ref={nameInputRef}
                   type="text"
                   required
+                  autoFocus
                   value={formData.name}
                   onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                   placeholder="Ex: Dra. Mariana Ramos ou Diego Navalha"
-                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500"
+                  className="w-full px-3.5 py-2 text-xs bg-slate-50/50 hover:bg-white focus:bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-900/5 transition-all text-slate-800 placeholder:text-slate-400"
                 />
               </div>
 
@@ -411,26 +436,26 @@ export const ProfessionalsManager: React.FC = () => {
                 label="Telefone / WhatsApp"
                 required
                 value={formData.phone}
-                leftIcon={<Phone className="w-3.5 h-3.5" />}
+                leftIcon={<Phone className="w-3.5 h-3.5 text-slate-400" />}
                 onValueChange={(cleanVal) => setFormData({ ...formData, phone: cleanVal })}
                 helperText="Formatação dinâmica com DDD (fixo ou celular)"
               />
 
               {/* Credenciais de Acesso (Login Firebase Auth) */}
-              <div className="p-3.5 bg-slate-50 border border-slate-200 rounded-xl space-y-3">
+              <div className="p-4 bg-slate-50/70 border border-slate-200/70 rounded-2xl space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <span className="text-xs font-semibold text-slate-700 flex items-center gap-1.5">
                     <Key className="w-3.5 h-3.5 text-amber-500" />
                     <span>Credenciais de Login (Firebase Auth)</span>
                   </span>
-                  <span className="text-[10px] bg-indigo-50 text-indigo-700 font-mono px-2 py-0.5 rounded font-bold">
+                  <span className="text-[10px] bg-slate-200/70 text-slate-700 font-mono px-2 py-0.5 rounded-md font-semibold">
                     RBAC: professional
                   </span>
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <label className="text-[11px] font-semibold text-slate-700 block mb-1">
+                    <label className="text-[11px] font-medium text-slate-600 block mb-1.5">
                       E-mail de Acesso
                     </label>
                     <div className="relative">
@@ -441,13 +466,13 @@ export const ProfessionalsManager: React.FC = () => {
                         value={formData.email}
                         onChange={(e) => setFormData({ ...formData, email: e.target.value })}
                         placeholder="pro@studiodigital.com"
-                        className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500"
+                        className="w-full pl-8 pr-3 py-1.5 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-900/5 transition-all text-slate-800 placeholder:text-slate-400"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="text-[11px] font-semibold text-slate-700 block mb-1">
+                    <label className="text-[11px] font-medium text-slate-600 block mb-1.5">
                       Senha de Acesso (Firebase)
                     </label>
                     <div className="relative">
@@ -459,7 +484,7 @@ export const ProfessionalsManager: React.FC = () => {
                         value={formData.password}
                         onChange={(e) => setFormData({ ...formData, password: e.target.value })}
                         placeholder="Mínimo 6 caracteres"
-                        className="w-full pl-8 pr-8 py-1.5 text-xs bg-white border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 font-mono"
+                        className="w-full pl-8 pr-8 py-1.5 text-xs bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-900/5 transition-all font-mono text-slate-800 placeholder:text-slate-400"
                       />
                       <button
                         type="button"
@@ -474,13 +499,13 @@ export const ProfessionalsManager: React.FC = () => {
                 </div>
 
                 <p className="text-[10px] text-slate-500 leading-relaxed">
-                  Estas credenciais permitem que o profissional autentique nativamente pelo Firebase Auth no Portal de Login (/login) e acesse diretamente sua agenda pessoal (/app/profissional/agenda).
+                  Permite autenticar nativamente no portal e gerenciar sua agenda exclusiva.
                 </p>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  <label className="text-xs font-medium text-slate-600 block mb-1.5">
                     Perfil / Função no SaaS
                   </label>
                   <select
@@ -488,7 +513,7 @@ export const ProfessionalsManager: React.FC = () => {
                     onChange={(e) =>
                       setFormData({ ...formData, role: e.target.value as UserRole })
                     }
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 bg-white"
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-900/5 transition-all bg-white text-slate-800"
                   >
                     <option value="profissional">Profissional / Executor</option>
                     <option value="gerente">Gerente Operacional</option>
@@ -496,7 +521,7 @@ export const ProfessionalsManager: React.FC = () => {
                   </select>
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  <label className="text-xs font-medium text-slate-600 block mb-1.5">
                     Comissão Padrão (%)
                   </label>
                   <input
@@ -511,13 +536,13 @@ export const ProfessionalsManager: React.FC = () => {
                         commissionPercentage: Number(e.target.value),
                       })
                     }
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 font-mono tabular-nums"
+                    className="w-full px-3.5 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-900/5 transition-all font-mono tabular-nums bg-white text-slate-800"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                <label className="text-xs font-medium text-slate-600 block mb-1.5">
                   Especialidades (separadas por vírgula)
                 </label>
                 <input
@@ -525,48 +550,48 @@ export const ProfessionalsManager: React.FC = () => {
                   value={formData.specialties}
                   onChange={(e) => setFormData({ ...formData, specialties: e.target.value })}
                   placeholder="Ex: Toxina Botulínica, Harmonização, Corte Fade, Mechas..."
-                  className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500"
+                  className="w-full px-3.5 py-2 text-xs bg-slate-50/50 hover:bg-white focus:bg-white border border-slate-200 rounded-xl focus:outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-900/5 transition-all text-slate-800 placeholder:text-slate-400"
                 />
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  <label className="text-xs font-medium text-slate-600 block mb-1.5">
                     Início da Jornada
                   </label>
                   <input
                     type="time"
                     value={formData.workStart}
                     onChange={(e) => setFormData({ ...formData, workStart: e.target.value })}
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 font-mono tabular-nums"
+                    className="w-full px-3.5 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-900/5 transition-all font-mono tabular-nums bg-white text-slate-800"
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-slate-700 block mb-1">
+                  <label className="text-xs font-medium text-slate-600 block mb-1.5">
                     Fim da Jornada
                   </label>
                   <input
                     type="time"
                     value={formData.workEnd}
                     onChange={(e) => setFormData({ ...formData, workEnd: e.target.value })}
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 font-mono tabular-nums"
+                    className="w-full px-3.5 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-slate-400 focus:ring-2 focus:ring-slate-900/5 transition-all font-mono tabular-nums bg-white text-slate-800"
                   />
                 </div>
               </div>
 
-              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 sticky bottom-0 bg-white/95 backdrop-blur-xs z-10 -mx-6 -mb-6 px-6 pb-6 mt-4">
+              <div className="flex items-center justify-end gap-2.5 pt-3.5 border-t border-slate-100 sticky bottom-0 bg-white/95 backdrop-blur-md z-10 -mx-6 -mb-8 px-6 pb-6 mt-4">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
-                  className="px-4 py-2 border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                  className="px-4 py-2.5 border border-slate-200 text-slate-600 hover:bg-slate-50 hover:text-slate-900 rounded-xl text-xs font-medium transition-colors cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold transition-colors shadow-xs cursor-pointer"
+                  className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-medium transition-all shadow-xs active:scale-[0.98] cursor-pointer flex items-center gap-1.5"
                 >
-                  Salvar Profissional
+                  <span>Salvar Profissional</span>
                 </button>
               </div>
             </form>

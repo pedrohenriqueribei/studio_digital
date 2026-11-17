@@ -580,9 +580,20 @@ export const SuperAdminDashboard: React.FC = () => {
                               <Building2 className="w-4 h-4" />
                             </div>
                             <div className="min-w-0">
-                              <span className="font-bold text-slate-900 block truncate">
-                                {b.tradeName}
-                              </span>
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-bold text-slate-900 block truncate">
+                                  {b.tradeName}
+                                </span>
+                                {b.isHeadquarters ? (
+                                  <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-bold shrink-0">
+                                    Matriz
+                                  </span>
+                                ) : (
+                                  <span className="text-[9px] uppercase px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-medium shrink-0">
+                                    Filial {b.unitCode ? `(${b.unitCode})` : ''}
+                                  </span>
+                                )}
+                              </div>
                               <span className="text-[11px] text-slate-400 block truncate">
                                 {b.name} {b.cnpj ? `· CNPJ ${b.cnpj}` : ''}
                               </span>

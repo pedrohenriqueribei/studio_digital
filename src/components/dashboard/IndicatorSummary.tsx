@@ -12,13 +12,19 @@ import {
   ArrowUpRight,
   Sparkles,
 } from 'lucide-react';
-import { Appointment, Comanda, Client, Professional, UserRole, Business } from '../../types';
+import { Appointment, Comanda, Client, Professional, Service, UserRole, Business } from '../../types';
+import {
+  comandaInvolvesProfessional,
+  getComandaRevenueForProfessional,
+  isAppointmentCoveredByClosedComanda,
+} from '../../utils/commissions';
 
 interface IndicatorSummaryProps {
   appointments: Appointment[];
   comandas: Comanda[];
   clients: Client[];
   professionals: Professional[];
+  services?: Service[];
   currentRole: UserRole;
   currentProfessional: Professional | null;
   currentBusiness: Business | null;
@@ -32,6 +38,7 @@ export const IndicatorSummary: React.FC<IndicatorSummaryProps> = ({
   comandas,
   clients,
   professionals,
+  services = [],
   currentRole,
   currentProfessional,
   currentBusiness,
@@ -75,11 +82,11 @@ export const IndicatorSummary: React.FC<IndicatorSummaryProps> = ({
     };
   }, [monthAppointments]);
 
-  // 2. Receita Mensal
+  // 2. Receita Mensal (ou Comissão no Mês para perfil profissional)
   const revenueMetric = useMemo(() => {
-    // Comandas closed in current month
-    const scopedComandas = currentRole === 'profissional' && currentProfessional
-      ? comandas.filter((c) => c.professionalId === currentProfessional.id)
+    const isProView = currentRole === 'profissional' && Boolean(currentProfessional);
+    const scopedComandas = isProView && currentProfessional
+      ? comandas.filter((c) => comandaInvolvesProfessional(c, currentProfessional.id))
       : comandas;
 
     const monthComandas = scopedComandas.filter((c) => {
@@ -88,22 +95,64 @@ export const IndicatorSummary: React.FC<IndicatorSummaryProps> = ({
       return date ? date.startsWith(currentMonthPrefix) : true;
     });
 
-    const closedComandaRevenue = monthComandas.reduce((sum, c) => sum + (c.total || 0), 0);
+    let closedComandaRevenue = 0;
+    let closedComandaCommission = 0;
 
-    // Sum scheduled non-cancelled appointments in current month
-    const scheduledRevenue = monthAppointments.reduce((sum, a) => sum + (a.price || 0), 0);
+    monthComandas.forEach((cmd) => {
+      if (isProView && currentProfessional) {
+        const share = getComandaRevenueForProfessional(
+          cmd,
+          currentProfessional.id,
+          services,
+          professionals
+        );
+        closedComandaRevenue += share.revenue;
+        closedComandaCommission += share.commission;
+      } else {
+        closedComandaRevenue += cmd.total || 0;
+      }
+    });
 
-    // If comandas closed exist, use them + non-concluded scheduled appointments
-    const totalRevenue = closedComandaRevenue > 0 ? closedComandaRevenue : scheduledRevenue;
+    let uncoveredRealizedRevenue = 0;
+    let uncoveredRealizedCommission = 0;
+    let scheduledRevenue = 0;
+    let scheduledCommission = 0;
+
+    monthAppointments.forEach((a) => {
+      const price = a.price || 0;
+      const srv = services.find((s) => s.id === a.serviceId);
+      const pro = professionals.find((p) => p.id === a.professionalId);
+      const pct = srv?.commissionPercentage ?? pro?.commissionPercentage ?? 40;
+      const comm = (price * pct) / 100;
+
+      scheduledRevenue += price;
+      scheduledCommission += comm;
+
+      if (
+        (a.status === 'concluido' || a.paymentStatus === 'pago') &&
+        !isAppointmentCoveredByClosedComanda(a, monthComandas)
+      ) {
+        uncoveredRealizedRevenue += price;
+        uncoveredRealizedCommission += comm;
+      }
+    });
+
+    const realizedRevenue = closedComandaRevenue + uncoveredRealizedRevenue;
+    const realizedCommission = closedComandaCommission + uncoveredRealizedCommission;
+
+    const totalRevenue = realizedRevenue > 0 ? realizedRevenue : scheduledRevenue;
+    const totalCommission = realizedCommission > 0 ? realizedCommission : scheduledCommission;
+    const displayValue = isProView ? totalCommission : totalRevenue;
     const ticketMedio = monthAppointments.length > 0 ? totalRevenue / monthAppointments.length : 0;
 
     return {
-      total: totalRevenue,
+      total: displayValue,
+      grossTotal: totalRevenue,
       ticketMedio,
       comandasCount: monthComandas.length,
-      realizedRevenue: closedComandaRevenue,
+      realizedRevenue,
     };
-  }, [comandas, currentRole, currentProfessional, monthAppointments, currentMonthPrefix]);
+  }, [comandas, currentRole, currentProfessional, monthAppointments, currentMonthPrefix, services, professionals]);
 
   // 3. Taxa de Ocupação da Agenda
   const occupancyMetric = useMemo(() => {
@@ -230,10 +279,12 @@ export const IndicatorSummary: React.FC<IndicatorSummaryProps> = ({
           <div className="mt-3 pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
             <div className="flex items-center gap-1 text-emerald-600 font-medium">
               <TrendingUp className="w-3.5 h-3.5" />
-              <span>Ticket Médio:</span>
+              <span>{currentRole === 'profissional' ? 'Sua Produção:' : 'Ticket Médio:'}</span>
             </div>
             <span className="font-mono font-bold text-slate-800">
-              R$ {revenueMetric.ticketMedio.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}
+              {currentRole === 'profissional'
+                ? `R$ ${revenueMetric.grossTotal.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`
+                : `R$ ${revenueMetric.ticketMedio.toLocaleString('pt-BR', { minimumFractionDigits: 0 })}`}
             </span>
           </div>
         </div>
