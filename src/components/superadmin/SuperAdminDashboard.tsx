@@ -34,6 +34,13 @@ import { Business, BusinessType, Professional, SaaSPlan, Service, TenantStatus, 
 import { slugify } from '../../utils/slugify';
 import { maskPhone } from '../../utils/masks';
 import { SuperAdminClaimsManager } from './SuperAdminClaimsManager';
+import { MaskedInput } from '../ui/MaskedInput';
+
+const formatBRLNumber = (value: number): string =>
+  (Number.isFinite(value) ? value : 0).toLocaleString('pt-BR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 
 export const SuperAdminDashboard: React.FC = () => {
   const {
@@ -319,6 +326,10 @@ export const SuperAdminDashboard: React.FC = () => {
     e.preventDefault();
     if (!planFormData.name.trim()) return;
 
+    const normalizedPrice = Number.isFinite(planFormData.priceMonthly)
+      ? Math.max(0, Math.round(planFormData.priceMonthly * 100) / 100)
+      : 0;
+
     const featureList = planFormData.features
       .split('\n')
       .map((f) => f.trim())
@@ -328,7 +339,7 @@ export const SuperAdminDashboard: React.FC = () => {
       updateSaasPlan({
         ...editingPlan,
         name: planFormData.name,
-        priceMonthly: planFormData.priceMonthly,
+        priceMonthly: normalizedPrice,
         maxProfessionals: planFormData.maxProfessionals,
         maxUnits: planFormData.maxUnits,
         features: featureList,
@@ -338,7 +349,7 @@ export const SuperAdminDashboard: React.FC = () => {
     } else {
       addSaasPlan({
         name: planFormData.name,
-        priceMonthly: planFormData.priceMonthly,
+        priceMonthly: normalizedPrice,
         maxProfessionals: planFormData.maxProfessionals,
         maxUnits: planFormData.maxUnits,
         features: featureList,
@@ -411,7 +422,7 @@ export const SuperAdminDashboard: React.FC = () => {
             <DollarSign className="w-4 h-4 text-emerald-600" />
           </div>
           <p className="text-2xl font-extrabold text-slate-900 font-mono tabular-nums">
-            R$ {platformStats.mrr.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            R$ {formatBRLNumber(platformStats.mrr)}
           </p>
           <div className="flex items-center gap-1.5 text-[11px] text-emerald-600 font-semibold mt-1">
             <TrendingUp className="w-3.5 h-3.5" />
@@ -624,7 +635,7 @@ export const SuperAdminDashboard: React.FC = () => {
                             {plan?.name || b.planId}
                           </span>
                           <span className="text-[11px] text-slate-500 font-mono tabular-nums">
-                            R$ {plan?.priceMonthly || 199}/mês
+                            R$ {formatBRLNumber(plan?.priceMonthly ?? 199)}/mês
                           </span>
                         </td>
 
@@ -1093,7 +1104,7 @@ export const SuperAdminDashboard: React.FC = () => {
                                   name: service.name,
                                   category: service.category || 'Geral',
                                   durationMinutes: service.durationMinutes || 45,
-                                  price: service.price || 0,
+                                  price: service.price ?? 0,
                                   commissionPercentage:
                                     service.commissionPercentage !== undefined
                                       ? service.commissionPercentage
@@ -1230,7 +1241,7 @@ export const SuperAdminDashboard: React.FC = () => {
 
                     <div className="mb-4">
                       <span className="text-3xl font-extrabold text-slate-900 font-mono tabular-nums">
-                        R$ {plan.priceMonthly}
+                        R$ {formatBRLNumber(plan.priceMonthly)}
                       </span>
                       <span className="text-xs text-slate-500"> / mês por estabelecimento</span>
                     </div>
@@ -1251,7 +1262,7 @@ export const SuperAdminDashboard: React.FC = () => {
                       <div className="flex justify-between pt-1 border-t border-slate-200">
                         <span className="text-slate-500">Studios Assinantes:</span>
                         <span className="font-bold text-indigo-700 font-mono tabular-nums">
-                          {activeCount} ({subtotalMRR > 0 ? `R$ ${subtotalMRR}/mês` : 'R$ 0'})
+                          {activeCount} ({subtotalMRR > 0 ? `R$ ${formatBRLNumber(subtotalMRR)}/mês` : 'R$ 0,00'})
                         </span>
                       </div>
                     </div>
@@ -1460,7 +1471,7 @@ export const SuperAdminDashboard: React.FC = () => {
                   >
                     {saasPlans.map((p) => (
                       <option key={p.id} value={p.id}>
-                        {p.name} (R$ {p.priceMonthly}/mês)
+                        {p.name} (R$ {formatBRLNumber(p.priceMonthly)}/mês)
                       </option>
                     ))}
                   </select>
@@ -1837,21 +1848,21 @@ export const SuperAdminDashboard: React.FC = () => {
                 />
               </div>
 
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-start">
                 <div>
-                  <label className="text-xs font-semibold text-slate-700 block mb-1">
-                    Preço Mensal (R$)
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    step={10}
+                  <MaskedInput
+                    maskType="currency"
+                    label="Preço Mensal (R$)"
                     required
+                    showValidationFeedback={false}
                     value={planFormData.priceMonthly}
-                    onChange={(e) =>
-                      setPlanFormData({ ...planFormData, priceMonthly: Number(e.target.value) })
+                    onValueChange={(cleanVal) =>
+                      setPlanFormData({
+                        ...planFormData,
+                        priceMonthly: Math.round((parseFloat(cleanVal) || 0) * 100) / 100,
+                      })
                     }
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 font-mono"
+                    className="font-mono tabular-nums font-bold"
                   />
                 </div>
                 <div>
@@ -1869,7 +1880,7 @@ export const SuperAdminDashboard: React.FC = () => {
                         maxProfessionals: Number(e.target.value),
                       })
                     }
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 font-mono"
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-slate-500 font-mono"
                   />
                 </div>
                 <div>
@@ -1884,7 +1895,7 @@ export const SuperAdminDashboard: React.FC = () => {
                     onChange={(e) =>
                       setPlanFormData({ ...planFormData, maxUnits: Number(e.target.value) })
                     }
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 font-mono"
+                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl focus:outline-none focus:border-slate-500 font-mono"
                   />
                 </div>
               </div>
@@ -1973,6 +1984,9 @@ export const SuperAdminDashboard: React.FC = () => {
                   setServiceFormError('A duração deve ser de pelo menos 5 minutos.');
                   return;
                 }
+                const normalizedServicePrice = Number.isFinite(serviceFormData.price)
+                  ? Math.max(0, Math.round(serviceFormData.price * 100) / 100)
+                  : 0;
                 const allowed =
                   serviceAssociationMode === 'all' ? [] : serviceFormData.allowedProfessionalIds;
 
@@ -1980,11 +1994,13 @@ export const SuperAdminDashboard: React.FC = () => {
                   updateService({
                     ...editingServiceItem,
                     ...serviceFormData,
+                    price: normalizedServicePrice,
                     allowedProfessionalIds: allowed,
                   });
                 } else {
                   addService({
                     ...serviceFormData,
+                    price: normalizedServicePrice,
                     allowedProfessionalIds: allowed,
                   });
                 }
@@ -2078,22 +2094,19 @@ export const SuperAdminDashboard: React.FC = () => {
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-semibold text-slate-700 block mb-1">
-                    Preço (R$) <span className="text-rose-500">*</span>
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    step={1}
+                  <MaskedInput
+                    maskType="currency"
+                    label="Preço (R$)"
                     required
+                    showValidationFeedback={false}
                     value={serviceFormData.price}
-                    onChange={(e) =>
+                    onValueChange={(cleanVal) =>
                       setServiceFormData({
                         ...serviceFormData,
-                        price: Number(e.target.value),
+                        price: Math.round((parseFloat(cleanVal) || 0) * 100) / 100,
                       })
                     }
-                    className="w-full px-3 py-2 text-xs border border-slate-200 rounded-xl font-mono tabular-nums font-bold text-slate-900 bg-white"
+                    className="font-mono tabular-nums font-bold"
                   />
                 </div>
               </div>

@@ -467,14 +467,15 @@ export const MonthlyGoalCard: React.FC<MonthlyGoalCardProps> = ({
                   </span>
                   <input
                     type="number"
-                    step="500"
-                    min="1000"
+                    step="0.01"
+                    min="0.01"
+                    inputMode="decimal"
                     value={goalInputValue}
                     onChange={(e) => {
                       setGoalInputValue(e.target.value);
                       setInputError(null);
                     }}
-                    placeholder="Ex: 35000"
+                    placeholder="Ex: 35000.00"
                     className="w-full pl-11 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-base font-mono font-extrabold text-slate-900 focus:outline-none focus:border-slate-800 focus:bg-white transition-colors"
                     autoFocus
                   />
@@ -524,7 +525,10 @@ export const MonthlyGoalCard: React.FC<MonthlyGoalCardProps> = ({
               </button>
               <button
                 type="button"
-                onClick={() => handleSaveGoal(Number(goalInputValue))}
+                onClick={() => {
+                  const parsed = parseFloat(goalInputValue.replace(',', '.'));
+                  handleSaveGoal(Number.isFinite(parsed) ? Math.round(parsed * 100) / 100 : NaN);
+                }}
                 className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold transition-all shadow-xs cursor-pointer flex items-center gap-1.5"
               >
                 <Check className="w-4 h-4 text-emerald-400" />

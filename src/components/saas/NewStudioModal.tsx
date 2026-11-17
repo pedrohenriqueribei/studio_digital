@@ -45,7 +45,8 @@ export const NewStudioModal: React.FC = () => {
       }
     }
 
-    const cleanGoal = Number(monthlyRevenueGoal.replace(/\D/g, '')) || 0;
+    const parsedGoal = parseFloat(monthlyRevenueGoal.replace(',', '.'));
+    const cleanGoal = Number.isFinite(parsedGoal) && parsedGoal >= 0 ? Math.round(parsedGoal * 100) / 100 : 0;
 
     await registerBusiness({
       name: name.trim(),
@@ -226,11 +227,12 @@ export const NewStudioModal: React.FC = () => {
               <input
                 type="number"
                 min="0"
-                step="500"
+                step="0.01"
+                inputMode="decimal"
                 value={monthlyRevenueGoal}
                 onChange={(e) => setMonthlyRevenueGoal(e.target.value)}
-                placeholder="0 (Pode ser definida posteriormente)"
-                className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 font-mono"
+                placeholder="0.00 (Pode ser definida posteriormente)"
+                className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:border-slate-500 font-mono tabular-nums"
               />
             </div>
             <p className="text-[10px] text-slate-400 mt-0.5">

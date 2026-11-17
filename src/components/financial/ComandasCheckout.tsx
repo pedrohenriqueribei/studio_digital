@@ -717,11 +717,12 @@ export const ComandasCheckout: React.FC = () => {
                     <div className="flex gap-1.5">
                       <input
                         type="number"
-                        min={1}
+                        min={0.01}
                         step="0.01"
+                        inputMode="decimal"
                         placeholder="R$ Valor"
                         value={newItemPrice}
-                        onChange={(e) => setNewItemPrice(Number(e.target.value))}
+                        onChange={(e) => setNewItemPrice(parseFloat(e.target.value.replace(',', '.')) || 0)}
                         className="w-24 px-2.5 py-1.5 border border-slate-200 rounded-lg bg-white font-mono tabular-nums"
                       />
                       <button
@@ -745,9 +746,12 @@ export const ComandasCheckout: React.FC = () => {
                     <input
                       type="number"
                       min={0}
+                      step="0.01"
+                      inputMode="decimal"
                       value={discountAmount}
                       onChange={(e) => {
-                        const val = Number(e.target.value);
+                        const parsed = parseFloat(e.target.value.replace(',', '.'));
+                        const val = Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed * 100) / 100 : 0;
                         setDiscountAmount(val);
                         if (selectedComanda) {
                           setSelectedComanda({

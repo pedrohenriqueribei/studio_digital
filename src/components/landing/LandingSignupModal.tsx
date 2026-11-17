@@ -59,7 +59,7 @@ export const LandingSignupModal: React.FC<LandingSignupModalProps> = ({
 
   const currentPlan = saasPlans.find((p) => p.id === selectedPlanId) || saasPlans[1];
   const monthlyPrice = isAnnual
-    ? Math.round(currentPlan.priceMonthly * 0.8)
+    ? Math.round(currentPlan.priceMonthly * 0.8 * 100) / 100
     : currentPlan.priceMonthly;
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -191,7 +191,7 @@ export const LandingSignupModal: React.FC<LandingSignupModalProps> = ({
           </div>
           <div className="text-right">
             <span className="text-sm font-extrabold text-slate-900 font-mono tabular-nums">
-              R$ {monthlyPrice}
+              R$ {monthlyPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
             </span>
             <span className="text-[10px] text-slate-500 block">/mês após teste</span>
           </div>

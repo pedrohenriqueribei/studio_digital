@@ -71,7 +71,7 @@ export const PlansModal: React.FC = () => {
 
                   <div className="mb-4">
                     <span className="text-2xl font-extrabold text-slate-900 font-mono tabular-nums">
-                      R$ {plan.priceMonthly}
+                      R$ {plan.priceMonthly.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                     <span className="text-xs text-slate-500"> / mês</span>
                   </div>

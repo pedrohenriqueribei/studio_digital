@@ -89,12 +89,12 @@ export const PlansLandingPage: React.FC = () => {
   const plansWithPrices = useMemo(() => {
     return saasPlans.map((plan) => {
       const monthly = plan.priceMonthly;
-      const annualizedMonthly = Math.round(monthly * 0.8);
+      const annualizedMonthly = Math.round(monthly * 0.8 * 100) / 100;
       return {
         ...plan,
         displayPrice: isAnnual ? annualizedMonthly : monthly,
-        yearlyTotal: annualizedMonthly * 12,
-        savingsYearly: (monthly - annualizedMonthly) * 12,
+        yearlyTotal: Math.round(annualizedMonthly * 12 * 100) / 100,
+        savingsYearly: Math.round((monthly - annualizedMonthly) * 12 * 100) / 100,
       };
     });
   }, [saasPlans, isAnnual]);
@@ -651,13 +651,13 @@ export const PlansLandingPage: React.FC = () => {
                       <div className="flex items-baseline gap-1">
                         <span className="text-sm font-semibold text-slate-500">R$</span>
                         <span className="text-4xl font-extrabold text-slate-900 font-mono tabular-nums tracking-tight">
-                          {plan.displayPrice}
+                          {plan.displayPrice.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                         <span className="text-xs text-slate-500 font-medium"> / mês</span>
                       </div>
                       {isAnnual ? (
                         <span className="text-[11px] text-emerald-700 font-semibold block mt-1">
-                          Faturado anualmente (economia de R$ {plan.savingsYearly}/ano)
+                          Faturado anualmente (economia de R$ {plan.savingsYearly.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/ano)
                         </span>
                       ) : (
                         <span className="text-[11px] text-slate-400 block mt-1">

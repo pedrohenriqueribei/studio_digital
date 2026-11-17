@@ -1505,7 +1505,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setSaasPlans((prev) => [...prev, newPlan]);
     addNotification({
       title: 'Novo Plano SaaS criado',
-      message: `Plano ${plan.name} cadastrado com valor de R$ ${plan.priceMonthly}/mês.`,
+      message: `Plano ${plan.name} cadastrado com valor de R$ ${plan.priceMonthly.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/mês.`,
       type: 'system',
     });
     return newPlan;
